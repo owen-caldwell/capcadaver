@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import ModelViewer, { type NdcPoint } from "./ModelViewer";
 
@@ -13,7 +13,10 @@ function toNdc(value: number, size: number) {
   return (value / size) * 2 - 1;
 }
 
-export default function HologramSection({ bio, contactInfo }: HologramSectionProps) {
+export default function HologramSection({
+  bio,
+  contactInfo,
+}: HologramSectionProps) {
   const shellRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelCornersNdc, setPanelCornersNdc] = useState<NdcPoint[]>([
@@ -22,23 +25,19 @@ export default function HologramSection({ bio, contactInfo }: HologramSectionPro
     { x: 0.8, y: -0.8 },
     { x: 0.1, y: -0.8 },
   ]);
-  const [reducedMotion, setReducedMotion] = useState(false);
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const updateReducedMotion = () => setReducedMotion(media.matches);
-    updateReducedMotion();
-    media.addEventListener("change", updateReducedMotion);
-    return () => media.removeEventListener("change", updateReducedMotion);
-  }, []);
-
   useEffect(() => {
     if (!shellRef.current || !panelRef.current) return;
 
     const updateCorners = () => {
       const shellRect = shellRef.current?.getBoundingClientRect();
       const panelRect = panelRef.current?.getBoundingClientRect();
-      if (!shellRect || !panelRect || shellRect.width === 0 || shellRect.height === 0) return;
+      if (
+        !shellRect ||
+        !panelRect ||
+        shellRect.width === 0 ||
+        shellRect.height === 0
+      )
+        return;
 
       const left = panelRect.left - shellRect.left;
       const right = panelRect.right - shellRect.left;
@@ -62,7 +61,12 @@ export default function HologramSection({ bio, contactInfo }: HologramSectionPro
         y: -toNdc(bottom, shellRect.height),
       };
 
-      setPanelCornersNdc([ndcTopLeft, ndcTopRight, ndcBottomRight, ndcBottomLeft]);
+      setPanelCornersNdc([
+        ndcTopLeft,
+        ndcTopRight,
+        ndcBottomRight,
+        ndcBottomLeft,
+      ]);
     };
 
     const resizeObserver = new ResizeObserver(updateCorners);
@@ -77,19 +81,13 @@ export default function HologramSection({ bio, contactInfo }: HologramSectionPro
     };
   }, []);
 
-  const emitterType = useMemo(() => (reducedMotion ? "orb" : "pyramid"), [reducedMotion]);
-
   return (
     <section
       ref={shellRef}
       className="hologram-shell relative w-full overflow-hidden rounded-xl border p-2"
     >
       <div className="absolute inset-0">
-        <ModelViewer
-          projectionTargetsNdc={panelCornersNdc}
-          emitterType={emitterType}
-          reducedMotion={reducedMotion}
-        />
+        <ModelViewer projectionTargetsNdc={panelCornersNdc} />
       </div>
 
       <div className="pointer-events-none absolute inset-0 hologram-grid" />
@@ -103,13 +101,13 @@ export default function HologramSection({ bio, contactInfo }: HologramSectionPro
         <div className="hologram-corner hologram-corner-bl" />
         <div className="hologram-corner hologram-corner-br" />
 
-        <p className="font-cyber-display text-[10px] tracking-[0.25em] text-cyan-200/80">
+        <p className="font-cyber-display text-[10px] tracking-[0.25em] text-white/80">
           PROJECTION WINDOW
         </p>
-        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-cyan-50/90">
+        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-white/90">
           {bio || "Bio coming soon."}
         </p>
-        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-cyan-100/80">
+        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-white/80">
           {contactInfo || "Contact details coming soon."}
         </p>
         <div className="mt-3 flex gap-3 text-xs">

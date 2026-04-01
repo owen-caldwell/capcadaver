@@ -18,32 +18,32 @@ export default function ContactPage() {
   };
 
   const inputClass =
-    "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder-zinc-500";
-  const labelClass = "mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400";
+    "w-full rounded-md border border-white/30 bg-black px-3 py-2 text-sm text-white placeholder:text-white/40 focus:border-white/50 focus:outline-none focus:ring-1 focus:ring-white/40";
+  const labelClass = "mb-1 block text-xs font-medium text-white/65";
 
   return (
-    <div className="flex min-h-screen flex-col items-center bg-zinc-50 p-6 font-sans dark:bg-zinc-950">
+    <div className="flex min-h-screen flex-col items-center bg-black p-6 font-sans text-white">
       <main className="w-full max-w-xl">
         <Link
           href="/"
-          className="mb-8 inline-block cursor-pointer text-sm text-zinc-600 underline underline-offset-2 dark:text-zinc-400"
+          className="mb-8 inline-block cursor-pointer text-sm text-white/75 underline underline-offset-2"
         >
           ← Back
         </Link>
 
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-            <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+        <div className="rounded-xl border border-white/25 bg-black shadow-none">
+          <div className="border-b border-white/20 px-6 py-4">
+            <h1 className="text-lg font-semibold tracking-tight text-white">
               Contact
             </h1>
-            <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="mt-0.5 text-sm text-white/65">
               Send a message and we’ll get back to you.
             </p>
           </div>
 
           <div className="p-6">
             {submitted ? (
-              <p className="rounded-lg border border-zinc-200 bg-zinc-50 py-6 text-center text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
+              <p className="rounded-lg border border-white/20 bg-white/5 py-6 text-center text-sm text-white/85">
                 Thanks for your message. We’ll be in touch.
               </p>
             ) : (
@@ -92,7 +92,7 @@ export default function ContactPage() {
                 </div>
                 <button
                   type="submit"
-                  className="cursor-pointer text-sm underline underline-offset-2"
+                  className="cursor-pointer text-sm text-white underline underline-offset-2"
                 >
                   Send
                 </button>

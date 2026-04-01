@@ -1,0 +1,11 @@
+Model Information:
+* title:	TCM Core particle
+* source:	https://sketchfab.com/3d-models/tcm-core-particle-4da2f9e24b8a4a478401a197f5b64c6d
+* author:	That one larry (https://sketchfab.com/Professor_E12)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "TCM Core particle" (https://sketchfab.com/3d-models/tcm-core-particle-4da2f9e24b8a4a478401a197f5b64c6d) by That one larry (https://sketchfab.com/Professor_E12) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

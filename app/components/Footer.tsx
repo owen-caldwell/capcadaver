@@ -29,8 +29,8 @@ export default function Footer() {
   }, []);
 
   return (
-    <footer className="mt-auto border-t border-zinc-200 bg-zinc-50 px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">
-      <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
+    <footer className="mt-auto border-t border-white/20 bg-black px-6 py-4 text-white">
+      <p className="text-center text-sm text-white/65">
         {dateTime} — Brooklyn, NY
       </p>
     </footer>

@@ -1,9 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import * as THREE from "three";
+import { Bounds, useGLTF } from "@react-three/drei";
+import {
+  ChromaticAberration,
+  EffectComposer,
+} from "@react-three/postprocessing";
+import { Box3, Group, Vector2, Vector3 } from "three";
+import { SkeletonUtils } from "three-stdlib";
+import {
+  DraggableHologramWindow,
+  HologramWindowStackProvider,
+} from "./DraggableHologramWindow";
+import { HologramCrosshair } from "./HologramCrosshair";
 import ModelViewer, { type NdcPoint } from "./ModelViewer";
 
 type Artist = {
@@ -53,66 +71,101 @@ function panelToNdc(panelRect: DOMRect, shellRect: DOMRect): NdcPoint[] {
   ];
 }
 
-function DnaPointCloud() {
-  const pointsRef = useRef<THREE.Points>(null);
-  const [mobileLayout, setMobileLayout] = useState(false);
+const CAPCAD_HEAD_GLTF = "/capcad-head/Cap36-NoRoot-Small.gltf";
 
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const sync = () => setMobileLayout(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, []);
+/** 1:1 NYC map asset (viewBox = pixel coordinates). */
+const NYC_MAP_SRC = "/nyc-map-2.png";
+const NYC_MAP_VIEW = 1024;
+/** Marker in image pixel space (matches nyc-map.png). */
+const LAST_KNOWN_MAP_DOT = { x: 337.5, y: 678.5 };
+const LAST_KNOWN_VENUE_LABEL = "Anthology Film Archives";
+const LAST_KNOWN_VENUE_URL = "https://www.anthologyfilmarchives.org/";
+/** Font sizes in viewBox units so text reads ~13/11px at 440px map width. */
+const MAP_FS = (px: number) => (px * NYC_MAP_VIEW) / 440;
+/** Legacy radar was 220×220 UI; scale so HUD reads the same at ~220px CSS size. */
+const RADAR_UI_SCALE = NYC_MAP_VIEW / 220;
+/** Radar centered on map; geometry extends past viewBox so rings clip at frame. */
+const RADAR = { cx: NYC_MAP_VIEW / 2, cy: NYC_MAP_VIEW / 2 };
+const RADAR_OUTER_R = 172 * RADAR_UI_SCALE;
+const RADAR_RING_COUNT = 15;
+const RADAR_RING_FRAC = Array.from(
+  { length: RADAR_RING_COUNT },
+  (_, i) => (i + 1) / RADAR_RING_COUNT,
+);
+const RADAR_RING_STROKE_THIN = 0.32 * RADAR_UI_SCALE;
+const RADAR_RING_STROKE_OUTER = 0.48 * RADAR_UI_SCALE;
+const RADAR_DOT_R_CORE = 2.5 * RADAR_UI_SCALE;
+const RADAR_DOT_R_RING = 6 * RADAR_UI_SCALE;
+/** Coordinates sit just right of the pulse ring. */
+const MAP_BESIDE_DOT_X = LAST_KNOWN_MAP_DOT.x + RADAR_DOT_R_RING + MAP_FS(5);
+/** Map label / dot accent (must match `.map-blink-dot-*` in globals.css). */
+const MAP_ACCENT = "#e41e1e";
 
-  const [geometry] = useState(() => {
-    const turns = 10;
-    const pointsPerTurn = 65;
-    const radius = 0.42;
-    const verticalScale = 0.08;
-    const pairCount = turns * pointsPerTurn;
-    const vertices: number[] = [];
+const PORTRAIT_ROTATE_SPEED = 0.8;
+const PORTRAIT_WORLD_UP = new Vector3(0, 0, 1);
 
-    for (let i = 0; i < pairCount; i += 1) {
-      const t = (i / pointsPerTurn) * Math.PI * 2;
-      const y = (i - pairCount / 2) * verticalScale;
+/** RGB-style shift via chromatic aberration (no dot-screen dither). */
+function PortraitPostFx() {
+  return (
+    <EffectComposer multisampling={0}>
+      <ChromaticAberration offset={new Vector2(0.001, 0.001)} />
+    </EffectComposer>
+  );
+}
 
-      // Strand A
-      vertices.push(Math.cos(t) * radius, y, Math.sin(t) * radius);
-      // Strand B (phase-shifted by PI)
-      vertices.push(
-        Math.cos(t + Math.PI) * radius,
-        y,
-        Math.sin(t + Math.PI) * radius,
-      );
+function CaptainCadaverPortrait() {
+  const turntableRef = useRef<Group>(null);
+  const { scene } = useGLTF(CAPCAD_HEAD_GLTF);
+  /**
+   * Reparent glTF off Scene, stand upright for +Z camera, then axis-align bbox center to
+   * local origin so world-Y spin runs through the head’s middle.
+   */
+  const modelRoot = useMemo(() => {
+    const src = SkeletonUtils.clone(scene);
+    const root = new Group();
+    root.name = "CapPortraitRoot";
+    while (src.children.length > 0) {
+      root.add(src.children[0]);
     }
+    root.rotation.set(-Math.PI / 2, 0, 0);
+    root.updateWorldMatrix(true, true);
+    const box = new Box3().setFromObject(root);
+    if (!box.isEmpty()) {
+      const center = new Vector3();
+      const size = new Vector3();
+      box.getCenter(center);
+      box.getSize(size);
+      root.position.sub(center);
+      root.userData.portraitBounds = {
+        size: { x: size.x, y: size.y, z: size.z },
+        centerBeforeAlign: {
+          x: center.x,
+          y: center.y,
+          z: center.z,
+        },
+      };
+    }
+    return root;
+  }, [scene]);
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
-    return geo;
-  });
-
-  useFrame((state, delta) => {
-    if (!pointsRef.current) return;
-    pointsRef.current.rotation.y += delta * 0.4;
-    pointsRef.current.rotation.x =
-      Math.sin(state.clock.elapsedTime * 0.35) * 0.12;
+  useFrame((_, delta) => {
+    if (!turntableRef.current) return;
+    turntableRef.current.rotateOnWorldAxis(
+      PORTRAIT_WORLD_UP,
+      delta * PORTRAIT_ROTATE_SPEED,
+    );
   });
 
   return (
-    <group rotation={[0, 0, mobileLayout ? Math.PI / 2 : 0]}>
-      <points ref={pointsRef} geometry={geometry}>
-        <pointsMaterial
-          color="red"
-          size={0.052}
-          sizeAttenuation
-          transparent
-          opacity={1}
-        />
-      </points>
-    </group>
+    <Bounds clip observe margin={1.2} fit={false}>
+      <group ref={turntableRef}>
+        <primitive object={modelRoot} />
+      </group>
+    </Bounds>
   );
 }
+
+useGLTF.preload(CAPCAD_HEAD_GLTF);
 
 export default function HologramPage({
   artists,
@@ -123,6 +176,7 @@ export default function HologramPage({
   contentByKey,
 }: HologramPageProps) {
   const shellRef = useRef<HTMLDivElement>(null);
+  const orbShellPxRef = useRef({ x: 0, y: 0 });
   const infoRef = useRef<HTMLDivElement>(null);
   const artistsRef = useRef<HTMLDivElement>(null);
   const upcomingRef = useRef<HTMLDivElement>(null);
@@ -131,17 +185,17 @@ export default function HologramPage({
   const [projectionTargetsNdc, setProjectionTargetsNdc] = useState<NdcPoint[]>(
     [],
   );
-  const [reducedMotion, setReducedMotion] = useState(false);
   const [sceneReady, setSceneReady] = useState(false);
   const [minDurationElapsed, setMinDurationElapsed] = useState(false);
   const [splashHidden, setSplashHidden] = useState(false);
+  /** True after splash opacity transition (see `.splash-screen` 350ms) so window spawn does not overlap the fade. */
+  const [windowSpawnAllowed, setWindowSpawnAllowed] = useState(false);
+  const [hoveredHoloWindowId, setHoveredHoloWindowId] = useState<string | null>(
+    null,
+  );
 
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const updateReducedMotion = () => setReducedMotion(media.matches);
-    updateReducedMotion();
-    media.addEventListener("change", updateReducedMotion);
-    return () => media.removeEventListener("change", updateReducedMotion);
+  const onHoverHoloWindowChange = useCallback((id: string | null) => {
+    setHoveredHoloWindowId(id);
   }, []);
 
   useEffect(() => {
@@ -169,27 +223,39 @@ export default function HologramPage({
   }, [completionPhase]);
 
   useEffect(() => {
+    if (!splashHidden) {
+      setWindowSpawnAllowed(false);
+      return;
+    }
+    const id = window.setTimeout(() => setWindowSpawnAllowed(true), 380);
+    return () => window.clearTimeout(id);
+  }, [splashHidden]);
+
+  const updateProjectionTargets = useCallback(() => {
+    const shellEl = shellRef.current;
+    if (!shellEl) return;
+    const shellRect = shellEl.getBoundingClientRect();
+    if (shellRect.width === 0 || shellRect.height === 0) return;
+
+    const panelEls = [
+      infoRef.current,
+      artistsRef.current,
+      upcomingRef.current,
+      locationRef.current,
+      pastRef.current,
+    ].filter(Boolean) as HTMLDivElement[];
+
+    const targets = panelEls.flatMap((panelEl) =>
+      panelToNdc(panelEl.getBoundingClientRect(), shellRect),
+    );
+    setProjectionTargetsNdc(targets);
+  }, []);
+
+  useEffect(() => {
     const shellEl = shellRef.current;
     if (!shellEl) return;
 
-    const updateTargets = () => {
-      const shellRect = shellEl.getBoundingClientRect();
-      if (shellRect.width === 0 || shellRect.height === 0) return;
-
-      const panelEls = [
-        infoRef.current,
-        artistsRef.current,
-        upcomingRef.current,
-        locationRef.current,
-        pastRef.current,
-      ].filter(Boolean);
-      const targets = panelEls.flatMap((panelEl) =>
-        panelToNdc(panelEl!.getBoundingClientRect(), shellRect),
-      );
-      setProjectionTargetsNdc(targets);
-    };
-
-    const resizeObserver = new ResizeObserver(updateTargets);
+    const resizeObserver = new ResizeObserver(updateProjectionTargets);
     resizeObserver.observe(shellEl);
     [
       infoRef.current,
@@ -200,23 +266,23 @@ export default function HologramPage({
     ].forEach((panel) => {
       if (panel) resizeObserver.observe(panel);
     });
-    window.addEventListener("resize", updateTargets);
-    updateTargets();
+    window.addEventListener("resize", updateProjectionTargets);
+    window.addEventListener("scroll", updateProjectionTargets, true);
+    updateProjectionTargets();
 
     return () => {
       resizeObserver.disconnect();
-      window.removeEventListener("resize", updateTargets);
+      window.removeEventListener("resize", updateProjectionTargets);
+      window.removeEventListener("scroll", updateProjectionTargets, true);
     };
-  }, []);
+  }, [updateProjectionTargets]);
 
-  const emitterType = useMemo(
-    () => (reducedMotion ? "orb" : "pyramid"),
-    [reducedMotion],
-  );
   const showSplash = !splashHidden;
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  /** `null` until client mount so SSR + first paint match (avoid Date.now() hydration mismatch). */
+  const [nowMs, setNowMs] = useState<number | null>(null);
 
   useEffect(() => {
+    setNowMs(Date.now());
     const timer = window.setInterval(() => {
       setNowMs(Date.now());
     }, 1000);
@@ -228,6 +294,15 @@ export default function HologramPage({
     if (!eventDate) return null;
     const target = new Date(`${eventDate}T00:00:00`).getTime();
     if (Number.isNaN(target)) return null;
+    if (nowMs === null) {
+      return {
+        isLive: false,
+        days: "--",
+        hours: "--",
+        minutes: "--",
+        seconds: "--",
+      };
+    }
 
     const diff = Math.max(0, target - nowMs);
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
@@ -252,26 +327,60 @@ export default function HologramPage({
   const subjectStatus = contentByKey.dossier_status || "AT LARGE";
   const subjectOrigin = contentByKey.dossier_origin || "Sector Nine";
   const lastKnownCoordinates =
-    contentByKey.last_known_coordinates || "40.7831, -73.9712";
-  const lastKnownDistrict =
-    contentByKey.last_known_location || "Manhattan, New York";
+    contentByKey.last_known_coordinates || "40.7246, -73.9901";
 
   return (
     <>
+      <svg
+        width={0}
+        height={0}
+        className="pointer-events-none fixed top-0 left-0"
+        style={{ width: 0, height: 0, overflow: "hidden" }}
+        aria-hidden
+      >
+        <defs>
+          <filter
+            id="holo-screen-bloom"
+            x="-100%"
+            y="-100%"
+            width="300%"
+            height="300%"
+            colorInterpolationFilters="sRGB"
+          >
+            <feGaussianBlur
+              in="SourceGraphic"
+              stdDeviation="10"
+              result="holoBloomBlur"
+            />
+            <feColorMatrix
+              in="holoBloomBlur"
+              type="matrix"
+              values="1.55 0 0 0 0.04
+                      0 1.48 0 0 0.03
+                      0 0 1.62 0 0.045
+                      0 0 0 1.25 0"
+              result="holoBloomGlow"
+            />
+            <feMerge>
+              <feMergeNode in="holoBloomGlow" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+      </svg>
       <div
         ref={shellRef}
-        className={`relative min-h-screen overflow-hidden ${!reducedMotion ? "holo-fullscreen-bloom" : ""}`}
+        className="relative min-h-screen overflow-hidden holo-fullscreen-bloom"
         aria-busy={showSplash}
       >
         <div
-          className={`pointer-events-auto absolute inset-0 transition-opacity duration-300 ${showSplash ? "opacity-0" : "opacity-100"}`}
+          className={`absolute inset-0 transition-opacity duration-300 ${showSplash ? "opacity-0" : "opacity-100"}`}
           aria-hidden={showSplash}
         >
           <ModelViewer
             projectionTargetsNdc={projectionTargetsNdc}
-            emitterType={emitterType}
-            reducedMotion={reducedMotion}
             onSceneReady={() => setSceneReady(true)}
+            orbShellPxRef={orbShellPxRef}
           />
         </div>
 
@@ -296,301 +405,400 @@ export default function HologramPage({
           </div>
         </div>
 
-        <main className="pointer-events-none relative z-10 mx-auto flex min-h-screen max-w-[1200px] flex-col justify-center gap-4 p-4 md:p-6">
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-[1.2fr_1fr]">
-            <div ref={infoRef} className="hologram-window relative p-4">
-              <div className="hologram-corner hologram-corner-tl" />
-              <div className="hologram-corner hologram-corner-tr" />
-              <div className="hologram-corner hologram-corner-bl" />
-              <div className="hologram-corner hologram-corner-br" />
-              <p className="font-cyber-display text-[11px] tracking-[0.28em] text-cyan-200/85">
-                SUBJECT DOSSIER
-              </p>
-              <div className="mt-3 flex flex-col md:flex-row gap-4">
-                <div className="border border-cyan-300/20 bg-cyan-900/10 p-2 w-full h-[200px] md:w-[200px] md:h-[300px]">
-                  <Canvas
-                    dpr={[1, 1.5]}
-                    camera={{ position: [0, 0, 2.8], fov: 45 }}
-                  >
-                    <DnaPointCloud />
-                  </Canvas>
-                </div>
-                <div className="text-sm text-cyan-50/90">
-                  <p className="font-cyber-display text-xl text-cyan-100">
-                    {subjectName}
-                  </p>
-                  <p className="mt-1 text-cyan-200/75">Alias: {subjectAlias}</p>
-                  <div className="mt-3 space-y-1">
-                    <p>
-                      <span className="text-cyan-200/70">Height:</span>{" "}
-                      {subjectHeight}
-                    </p>
-                    <p>
-                      <span className="text-cyan-200/70">Weight:</span>{" "}
-                      {subjectWeight}
-                    </p>
-                    <p>
-                      <span className="text-cyan-200/70">Blood Type:</span>{" "}
-                      {subjectBloodType}
-                    </p>
-                    <p>
-                      <span className="text-cyan-200/70">Origin:</span>{" "}
-                      {subjectOrigin}
-                    </p>
-                    <p>
-                      <span className="text-cyan-200/70">Status:</span>{" "}
-                      {subjectStatus}
-                    </p>
-                  </div>
-                  <p className="mt-3 whitespace-pre-wrap text-cyan-100/80">
-                    {bio || "No extended intelligence available."}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-4 flex gap-4 text-xs">
-                <Link href="/admin" className="hologram-link">
-                  ADMIN
-                </Link>
-                <Link href="/contact" className="hologram-link">
-                  CONTACT HANDLER
-                </Link>
-              </div>
-            </div>
-
-            <div ref={upcomingRef} className="hologram-window relative p-4">
-              <div className="hologram-corner hologram-corner-tl" />
-              <div className="hologram-corner hologram-corner-tr" />
-              <div className="hologram-corner hologram-corner-bl" />
-              <div className="hologram-corner hologram-corner-br" />
-              <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-cyan-200/85">
-                Primary Operation Countdown
-              </h3>
-              {!upcomingEvent ? (
-                <p className="text-sm text-cyan-100/75">
-                  No active operation scheduled.
+        <HologramWindowStackProvider>
+          <main className="relative z-10 mx-auto flex min-h-screen max-w-[1200px] flex-col justify-center gap-4 p-4 md:p-6">
+            <section className="grid grid-cols-1 gap-4 md:grid-cols-[1.2fr_1fr]">
+              <DraggableHologramWindow
+                panelRef={infoRef}
+                onPositionChange={updateProjectionTargets}
+                className="hologram-window relative p-4"
+                spawnShellRef={shellRef}
+                orbShellPxRef={orbShellPxRef}
+                splashHidden={splashHidden}
+                windowSpawnAllowed={windowSpawnAllowed}
+                spawnOrder={0}
+                holoWindowId="dossier"
+                dimmed={
+                  hoveredHoloWindowId !== null &&
+                  hoveredHoloWindowId !== "dossier"
+                }
+              >
+                <div className="hologram-corner hologram-corner-tl" />
+                <div className="hologram-corner hologram-corner-tr" />
+                <div className="hologram-corner hologram-corner-bl" />
+                <div className="hologram-corner hologram-corner-br" />
+                <p className="font-cyber-display text-[11px] tracking-[0.28em] text-white/85">
+                  SUBJECT DOSSIER
                 </p>
-              ) : (
-                <div className="space-y-3">
-                  <p className="font-cyber-display text-5xl leading-none tracking-[0.08em] text-cyan-100 md:text-6xl">
-                    {countdown?.isLive
-                      ? "LIVE NOW"
-                      : `${countdown?.days ?? "00"}:${countdown?.hours ?? "00"}:${countdown?.minutes ?? "00"}:${countdown?.seconds ?? "00"}`}
-                  </p>
-                  <div className="border-t border-cyan-300/20 pt-3 text-sm text-cyan-50/90">
-                    <p>
-                      <span className="text-cyan-200/75">Date:</span>{" "}
-                      {upcomingEvent.date ?? "TBD"}
-                    </p>
-                    <p>
-                      <span className="text-cyan-200/75">Artist:</span>{" "}
-                      {upcomingEvent.artist ?? "TBA"}
-                    </p>
-                    <p>
-                      <span className="text-cyan-200/75">Venue:</span>{" "}
-                      {upcomingEvent.venue ?? "Venue TBA"}
-                    </p>
-                    <p>
-                      <span className="text-cyan-200/75">City:</span>{" "}
-                      {upcomingEvent.city ?? "City TBA"}
-                    </p>
-                    {upcomingEvent.notes ? (
-                      <p className="mt-2 text-cyan-100/80">
-                        {upcomingEvent.notes}
-                      </p>
-                    ) : null}
-                    {contactInfo ? (
-                      <p className="mt-2 text-cyan-100/75">{contactInfo}</p>
-                    ) : null}
-                    <div className="mt-3">
-                      {upcomingEvent.ticket_url ? (
-                        <a
-                          href={
-                            normalizedUrl(upcomingEvent.ticket_url) ?? undefined
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="hologram-link"
-                        >
-                          GET TICKETS
-                        </a>
-                      ) : (
-                        <span className="text-cyan-100/70">
-                          Ticket link coming soon
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div ref={artistsRef} className="hologram-window relative p-4">
-              <div className="hologram-corner hologram-corner-tl" />
-              <div className="hologram-corner hologram-corner-tr" />
-              <div className="hologram-corner hologram-corner-bl" />
-              <div className="hologram-corner hologram-corner-br" />
-              <h2 className="font-cyber-display text-[11px] uppercase tracking-[0.22em] text-cyan-200/85">
-                Known Accomplices
-              </h2>
-              {artists.length === 0 ? (
-                <p className="mt-3 text-sm text-cyan-100/70">
-                  No accomplices logged.
-                </p>
-              ) : (
-                <ul className="mt-3 space-y-2 text-sm text-cyan-50/90">
-                  {artists.map((artist) => (
-                    <li
-                      key={artist.id}
-                      className="flex items-center gap-3 border border-cyan-300/15 bg-cyan-950/20 p-2"
+                <div className="mt-3 flex flex-col md:flex-row gap-4">
+                  <div className="border border-white/25 bg-white/5 p-2 mx-auto w-full max-w-[min(100%,360px)] aspect-square md:mx-0 md:w-[320px] md:h-[320px] md:max-w-none md:shrink-0">
+                    <Canvas
+                      className="h-full w-full"
+                      dpr={[1, 1.5]}
+                      frameloop="always"
+                      camera={{ position: [0, 12, 0], fov: 10 }}
                     >
-                      <div className="flex h-10 w-10 items-center justify-center border border-cyan-300/20 text-xs text-cyan-100/85">
-                        {artist.name
-                          .split(" ")
-                          .map((part) => part[0])
-                          .join("")
-                          .slice(0, 2)
-                          .toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        {artist.url ? (
+                      <color attach="background" args={["#000000"]} />
+                      {/*
+                    webgpu_postprocessing.html: Scene fog + lights.
+                    Original uses Fog(0x000000, 1, 1000) at ~400-unit scale; near/far
+                    tightened here so falloff reads in the small portrait frustum.
+                  */}
+                      <fog attach="fog" args={["#000000", 0, 14]} />
+                      <ambientLight color="#cccccc" intensity={15} />
+                      <Suspense fallback={null}>
+                        <CaptainCadaverPortrait />
+                      </Suspense>
+                      <PortraitPostFx />
+                    </Canvas>
+                  </div>
+                  <div className="text-sm text-white/90">
+                    <p className="font-cyber-display text-xl text-white">
+                      {subjectName}
+                    </p>
+                    <p className="mt-1 text-white/75">Alias: {subjectAlias}</p>
+                    <div className="mt-3 space-y-1">
+                      <p>
+                        <span className="text-white/70">Height:</span>{" "}
+                        {subjectHeight}
+                      </p>
+                      <p>
+                        <span className="text-white/70">Weight:</span>{" "}
+                        {subjectWeight}
+                      </p>
+                      <p>
+                        <span className="text-white/70">Blood Type:</span>{" "}
+                        {subjectBloodType}
+                      </p>
+                      <p>
+                        <span className="text-white/70">Origin:</span>{" "}
+                        {subjectOrigin}
+                      </p>
+                      <p>
+                        <span className="text-white/70">Status:</span>{" "}
+                        {subjectStatus}
+                      </p>
+                    </div>
+                    <p className="mt-3 whitespace-pre-wrap text-white/80">
+                      {bio || "No extended intelligence available."}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 flex gap-4 text-xs">
+                  <Link href="/admin" className="hologram-link">
+                    ADMIN
+                  </Link>
+                  <Link href="/contact" className="hologram-link">
+                    CONTACT HANDLER
+                  </Link>
+                </div>
+              </DraggableHologramWindow>
+
+              <DraggableHologramWindow
+                panelRef={upcomingRef}
+                onPositionChange={updateProjectionTargets}
+                className="hologram-window relative p-4"
+                spawnShellRef={shellRef}
+                orbShellPxRef={orbShellPxRef}
+                splashHidden={splashHidden}
+                windowSpawnAllowed={windowSpawnAllowed}
+                spawnOrder={1}
+                holoWindowId="countdown"
+                dimmed={
+                  hoveredHoloWindowId !== null &&
+                  hoveredHoloWindowId !== "countdown"
+                }
+              >
+                <div className="hologram-corner hologram-corner-tl" />
+                <div className="hologram-corner hologram-corner-tr" />
+                <div className="hologram-corner hologram-corner-bl" />
+                <div className="hologram-corner hologram-corner-br" />
+                <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/85">
+                  Primary Operation Countdown
+                </h3>
+                {!upcomingEvent ? (
+                  <p className="text-sm text-white/75">
+                    No active operation scheduled.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="font-countdown text-5xl leading-none tracking-[0.12em] tabular-nums text-white md:text-6xl">
+                      {countdown?.isLive
+                        ? "LIVE NOW"
+                        : `${countdown?.days ?? "00"}:${countdown?.hours ?? "00"}:${countdown?.minutes ?? "00"}:${countdown?.seconds ?? "00"}`}
+                    </p>
+                    <div className="border-t border-white/25 pt-3 text-sm text-white/90">
+                      <p>
+                        <span className="text-white/75">Date:</span>{" "}
+                        {upcomingEvent.date ?? "TBD"}
+                      </p>
+                      <p>
+                        <span className="text-white/75">Artist:</span>{" "}
+                        {upcomingEvent.artist ?? "TBA"}
+                      </p>
+                      <p>
+                        <span className="text-white/75">Venue:</span>{" "}
+                        {upcomingEvent.venue ?? "Venue TBA"}
+                      </p>
+                      <p>
+                        <span className="text-white/75">City:</span>{" "}
+                        {upcomingEvent.city ?? "City TBA"}
+                      </p>
+                      {upcomingEvent.notes ? (
+                        <p className="mt-2 text-white/80">
+                          {upcomingEvent.notes}
+                        </p>
+                      ) : null}
+                      {contactInfo ? (
+                        <p className="mt-2 text-white/75">{contactInfo}</p>
+                      ) : null}
+                      <div className="mt-3">
+                        {upcomingEvent.ticket_url ? (
                           <a
-                            href={normalizedUrl(artist.url) ?? undefined}
+                            href={
+                              normalizedUrl(upcomingEvent.ticket_url) ??
+                              undefined
+                            }
                             target="_blank"
                             rel="noopener noreferrer"
                             className="hologram-link"
                           >
-                            {artist.name}
+                            GET TICKETS
                           </a>
                         ) : (
-                          <p className="truncate">{artist.name}</p>
+                          <span className="text-white/70">
+                            Ticket link coming soon
+                          </span>
                         )}
-                        <p className="text-[11px] uppercase tracking-[0.12em] text-cyan-200/60">
-                          Mugshot Reference
-                        </p>
                       </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+                    </div>
+                  </div>
+                )}
+              </DraggableHologramWindow>
+            </section>
 
-            <div ref={locationRef} className="hologram-window relative p-4">
-              <div className="hologram-corner hologram-corner-tl" />
-              <div className="hologram-corner hologram-corner-tr" />
-              <div className="hologram-corner hologram-corner-bl" />
-              <div className="hologram-corner hologram-corner-br" />
-              <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-cyan-200/85">
-                Last Known Location
-              </h3>
-              <div className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
-                <div className="border border-cyan-300/20 bg-cyan-950/20 p-2">
+            <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <DraggableHologramWindow
+                panelRef={artistsRef}
+                onPositionChange={updateProjectionTargets}
+                className="hologram-window relative p-4"
+                spawnShellRef={shellRef}
+                orbShellPxRef={orbShellPxRef}
+                splashHidden={splashHidden}
+                windowSpawnAllowed={windowSpawnAllowed}
+                spawnOrder={2}
+                holoWindowId="accomplices"
+                dimmed={
+                  hoveredHoloWindowId !== null &&
+                  hoveredHoloWindowId !== "accomplices"
+                }
+              >
+                <div className="hologram-corner hologram-corner-tl" />
+                <div className="hologram-corner hologram-corner-tr" />
+                <div className="hologram-corner hologram-corner-bl" />
+                <div className="hologram-corner hologram-corner-br" />
+                <h2 className="font-cyber-display text-[11px] uppercase tracking-[0.22em] text-white/85">
+                  Known Accomplices
+                </h2>
+                {artists.length === 0 ? (
+                  <p className="mt-3 text-sm text-white/70">
+                    No accomplices logged.
+                  </p>
+                ) : (
+                  <ul className="mt-3 space-y-2 text-sm text-white/90">
+                    {artists.map((artist) => (
+                      <li
+                        key={artist.id}
+                        className="flex items-center gap-3 border border-white/20 bg-white/5 p-2"
+                      >
+                        <div className="flex h-10 w-10 items-center justify-center border border-white/25 text-xs text-white/85">
+                          {artist.name
+                            .split(" ")
+                            .map((part) => part[0])
+                            .join("")
+                            .slice(0, 2)
+                            .toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          {artist.url ? (
+                            <a
+                              href={normalizedUrl(artist.url) ?? undefined}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hologram-link"
+                            >
+                              {artist.name}
+                            </a>
+                          ) : (
+                            <p className="truncate">{artist.name}</p>
+                          )}
+                          <p className="text-[11px] uppercase tracking-[0.12em] text-white/60">
+                            Mugshot Reference
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </DraggableHologramWindow>
+
+              <DraggableHologramWindow
+                panelRef={locationRef}
+                onPositionChange={updateProjectionTargets}
+                className="hologram-window relative p-4"
+                spawnShellRef={shellRef}
+                orbShellPxRef={orbShellPxRef}
+                splashHidden={splashHidden}
+                windowSpawnAllowed={windowSpawnAllowed}
+                spawnOrder={3}
+                holoWindowId="location"
+                dimmed={
+                  hoveredHoloWindowId !== null &&
+                  hoveredHoloWindowId !== "location"
+                }
+              >
+                <div className="hologram-corner hologram-corner-tl" />
+                <div className="hologram-corner hologram-corner-tr" />
+                <div className="hologram-corner hologram-corner-bl" />
+                <div className="hologram-corner hologram-corner-br" />
+                <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/85">
+                  Last Known Location
+                </h3>
+                <div className="border border-white/25 bg-white/5">
                   <svg
-                    viewBox="0 0 220 220"
-                    className="h-[220px] w-full bg-[#020710]"
-                    aria-label="Map of Manhattan with subject marker"
+                    viewBox={`0 0 ${NYC_MAP_VIEW} ${NYC_MAP_VIEW}`}
+                    overflow="hidden"
+                    className="aspect-square max-w-full"
+                    role="img"
+                    aria-label={`NYC map: ${LAST_KNOWN_VENUE_LABEL}, ${lastKnownCoordinates}`}
                   >
-                    <rect x="0" y="0" width="220" height="220" fill="#020710" />
-                    <g stroke="rgba(108, 233, 255, 0.18)" strokeWidth="1">
-                      {Array.from({ length: 11 }).map((_, i) => (
-                        <line
-                          key={`v-${i}`}
-                          x1={i * 22}
-                          y1="0"
-                          x2={i * 22}
-                          y2="220"
-                        />
-                      ))}
-                      {Array.from({ length: 11 }).map((_, i) => (
-                        <line
-                          key={`h-${i}`}
-                          x1="0"
-                          y1={i * 22}
-                          x2="220"
-                          y2={i * 22}
+                    <image
+                      href={NYC_MAP_SRC}
+                      x={0}
+                      y={0}
+                      width={NYC_MAP_VIEW}
+                      height={NYC_MAP_VIEW}
+                      preserveAspectRatio="xMidYMid meet"
+                    />
+                    <g fill="none" strokeLinecap="round">
+                      {RADAR_RING_FRAC.map((frac, i) => (
+                        <circle
+                          key={i}
+                          cx={RADAR.cx}
+                          cy={RADAR.cy}
+                          r={RADAR_OUTER_R * frac}
+                          stroke="rgba(255, 255, 255, 0.28)"
+                          strokeWidth={
+                            i === RADAR_RING_FRAC.length - 1
+                              ? RADAR_RING_STROKE_OUTER
+                              : RADAR_RING_STROKE_THIN
+                          }
                         />
                       ))}
                     </g>
-                    <path
-                      d="M120 12 L136 42 L142 84 L140 126 L133 174 L118 208 L96 210 L84 182 L82 142 L88 94 L100 52 Z"
-                      fill="rgba(87, 238, 255, 0.08)"
-                      stroke="rgba(124, 241, 255, 0.7)"
-                      strokeWidth="2"
-                    />
+                    <text
+                      x={MAP_BESIDE_DOT_X}
+                      y={LAST_KNOWN_MAP_DOT.y}
+                      textAnchor="start"
+                      dominantBaseline="middle"
+                      fill={MAP_ACCENT}
+                      fontSize={MAP_FS(11)}
+                      fontFamily="var(--font-b612-mono), ui-monospace, monospace"
+                      letterSpacing="0.1em"
+                    >
+                      {lastKnownCoordinates}
+                    </text>
                     <circle
-                      cx="116"
-                      cy="118"
-                      r="5"
+                      cx={LAST_KNOWN_MAP_DOT.x}
+                      cy={LAST_KNOWN_MAP_DOT.y}
+                      r={RADAR_DOT_R_CORE}
                       className="map-blink-dot-core"
                     />
                     <circle
-                      cx="116"
-                      cy="118"
-                      r="12"
+                      cx={LAST_KNOWN_MAP_DOT.x}
+                      cy={LAST_KNOWN_MAP_DOT.y}
+                      r={RADAR_DOT_R_RING}
                       className="map-blink-dot-ring"
                     />
                   </svg>
                 </div>
-                <div className="text-sm text-cyan-50/90">
-                  <p className="text-cyan-200/75">District</p>
-                  <p className="font-cyber-display text-cyan-100">
-                    {lastKnownDistrict}
-                  </p>
-                  <p className="mt-3 text-cyan-200/75">Coordinates</p>
-                  <p className="font-cyber-display tracking-[0.08em] text-red-300">
-                    {lastKnownCoordinates}
-                  </p>
-                  <p className="mt-3 text-xs text-cyan-100/75">
-                    Marker pulse indicates latest confirmed sighting in the
-                    Manhattan AO.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
+                <p className="mt-2">
+                  <a
+                    href={LAST_KNOWN_VENUE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-cyber-display text-[11px] tracking-[0.12em] hologram-link hologram-link-venue"
+                  >
+                    {LAST_KNOWN_VENUE_LABEL}
+                  </a>
+                </p>
+              </DraggableHologramWindow>
+            </section>
 
-          <section ref={pastRef} className="hologram-window relative p-4">
-            <div className="hologram-corner hologram-corner-tl" />
-            <div className="hologram-corner hologram-corner-tr" />
-            <div className="hologram-corner hologram-corner-bl" />
-            <div className="hologram-corner hologram-corner-br" />
-            <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-cyan-200/80">
-              Archived Operations
-            </h3>
-            {pastEvents.length === 0 ? (
-              <p className="text-sm text-cyan-100/70">No past events.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm text-cyan-100/80">
-                  <thead>
-                    <tr className="border-b border-cyan-300/20">
-                      <th className="py-2 pr-4 font-medium">Date</th>
-                      <th className="py-2 pr-4 font-medium">Artist</th>
-                      <th className="py-2 pr-4 font-medium">Venue</th>
-                      <th className="py-2 font-medium">City</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pastEvents.map((event) => (
-                      <tr
-                        key={event.id}
-                        className="border-y border-cyan-300/15"
-                      >
-                        <td className="py-2 pr-4">{event.date ?? "TBD"}</td>
-                        <td className="py-2 pr-4">{event.artist ?? "TBA"}</td>
-                        <td className="py-2 pr-4">
-                          {event.venue ?? "Venue TBA"}
-                        </td>
-                        <td className="py-2">{event.city ?? "City TBA"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        </main>
+            <section>
+              <DraggableHologramWindow
+                panelRef={pastRef}
+                onPositionChange={updateProjectionTargets}
+                className="hologram-window relative p-4"
+                spawnShellRef={shellRef}
+                orbShellPxRef={orbShellPxRef}
+                splashHidden={splashHidden}
+                windowSpawnAllowed={windowSpawnAllowed}
+                spawnOrder={4}
+                holoWindowId="archive"
+                dimmed={
+                  hoveredHoloWindowId !== null &&
+                  hoveredHoloWindowId !== "archive"
+                }
+              >
+                <div className="hologram-corner hologram-corner-tl" />
+                <div className="hologram-corner hologram-corner-tr" />
+                <div className="hologram-corner hologram-corner-bl" />
+                <div className="hologram-corner hologram-corner-br" />
+                <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/80">
+                  Archived Operations
+                </h3>
+                {pastEvents.length === 0 ? (
+                  <p className="text-sm text-white/70">No past events.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm text-white/80">
+                      <thead>
+                        <tr className="border-b border-white/25">
+                          <th className="py-2 pr-4 font-medium">Date</th>
+                          <th className="py-2 pr-4 font-medium">Artist</th>
+                          <th className="py-2 pr-4 font-medium">Venue</th>
+                          <th className="py-2 font-medium">City</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pastEvents.map((event) => (
+                          <tr
+                            key={event.id}
+                            className="border-y border-white/20"
+                          >
+                            <td className="py-2 pr-4">{event.date ?? "TBD"}</td>
+                            <td className="py-2 pr-4">
+                              {event.artist ?? "TBA"}
+                            </td>
+                            <td className="py-2 pr-4">
+                              {event.venue ?? "Venue TBA"}
+                            </td>
+                            <td className="py-2">{event.city ?? "City TBA"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </DraggableHologramWindow>
+            </section>
+          </main>
+          <HologramCrosshair
+            active={splashHidden}
+            onHoverWindowChange={onHoverHoloWindowChange}
+          />
+        </HologramWindowStackProvider>
       </div>
     </>
   );
