@@ -20,38 +20,8 @@ export type NdcPoint = {
   y: number;
 };
 
-/** Matches Canvas default camera in this file. */
-const EMITTER_CAMERA_Z = 3.5;
-const EMITTER_FOV_DEG = 38;
-/**
- * Use a narrow aspect so horizontal bounds stay inside the frustum on portrait
- * viewports; vertical FOV is unchanged by aspect.
- */
-const EMITTER_BOUNDS_MIN_ASPECT = 0.48;
-/** World-space inset so scaled emitter + ray décor stay inside the canvas. */
-const EMITTER_EDGE_PAD = 0.38;
-
-/** Random position on each mount, kept inside the visible frustum slice at that depth. */
-function randomEmitterOrigin(): [number, number, number] {
-  const z = 0.28 + Math.random() * 0.62;
-  const depth = EMITTER_CAMERA_Z - z;
-  const tanHalfFov = Math.tan((EMITTER_FOV_DEG * Math.PI) / 360);
-  const halfY = depth * tanHalfFov;
-  const halfX = halfY * EMITTER_BOUNDS_MIN_ASPECT;
-  const pad = EMITTER_EDGE_PAD;
-  if (halfX <= pad || halfY <= pad) {
-    return [0, 0, 0.55];
-  }
-  const xMin = -halfX + pad;
-  const xMax = halfX - pad;
-  const yMin = -halfY + pad;
-  const yMax = halfY - pad;
-  return [
-    THREE.MathUtils.lerp(xMin, xMax, Math.random()),
-    THREE.MathUtils.lerp(yMin, yMax, Math.random()),
-    z,
-  ];
-}
+/** Fixed in front of the camera so the prism stays visually centered on screen. */
+const CENTER_EMITTER_ORIGIN: [number, number, number] = [0, 0, 0.45];
 
 /** Skip raycast on décor meshes so they do not intercept pointer events meant for HTML/UI. */
 function noRaycast(
@@ -64,6 +34,12 @@ type ModelViewerProps = {
   onSceneReady?: () => void;
   /** Updated every frame: emitter projected into canvas pixel space (origin top-left), same box as the fullscreen shell. */
   orbShellPxRef?: MutableRefObject<{ x: number; y: number }>;
+  /** When false, prism→panel beams are not drawn (e.g. until HologramPage windows spawn). */
+  showProjectionBeams?: boolean;
+  /**
+   * Stops the render loop (prism, vessel sphere, postprocessing) — e.g. user idle / skelly screen.
+   */
+  pauseAnimation?: boolean;
 };
 
 const PRISM_GLTF = "/prism/scene.gltf";
@@ -110,7 +86,7 @@ function PrismEmitter({ motionScale }: { motionScale: number }) {
   }, [clone]);
 
   /**
-   * Pivot spin/beams at the prism core: bbox center is in world space; `clone` lives under
+   * Pivot spin at the prism core: bbox center is in world space; `clone` lives under
    * `spinRef`, so subtracting world `getCenter` from local `position` was wrong (way off on X).
    * Convert world center → spin’s local space, then offset `clone.position`.
    */
@@ -156,135 +132,6 @@ function PrismEmitter({ motionScale }: { motionScale: number }) {
 
 useGLTF.preload(PRISM_GLTF);
 
-/** Count / shell inspired by three.js webgl_raycaster_bvh.html ray visualization. */
-const ORB_POINT_COUNT = 160;
-const ORB_POINT_SHELL_RADIUS = 0.3;
-const ORB_POINT_SIZE = 0.012;
-/** Matches webgl_raycaster_bvh.html: ~0.001 rad/frame at 60fps → delta * 0.06; slightly boosted for readability. */
-const ORB_POINT_SPIN_PER_SEC = 0.095;
-
-function OrbRayPointField({ motionScale }: { motionScale: number }) {
-  const instancedRef = useRef<THREE.InstancedMesh>(null);
-  const linesRef = useRef<THREE.LineSegments>(null);
-  const shellGeo = useMemo(() => new THREE.SphereGeometry(1, 5, 5), []);
-  const shellMat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: 0x7cf1ff,
-        transparent: true,
-        opacity: 0.4,
-        depthWrite: false,
-      }),
-    [],
-  );
-  const lineGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute(
-      "position",
-      new THREE.BufferAttribute(new Float32Array(ORB_POINT_COUNT * 2 * 3), 3),
-    );
-    return g;
-  }, []);
-  const lineMat = useMemo(
-    () =>
-      new THREE.LineBasicMaterial({
-        color: 0x5ad8f0,
-        transparent: true,
-        opacity: 0.24,
-        depthWrite: false,
-      }),
-    [],
-  );
-  const tmp = useRef({
-    pos: new THREE.Vector3(),
-    quat: new THREE.Quaternion(),
-    scale: new THREE.Vector3(),
-    mat: new THREE.Matrix4(),
-    axis: new THREE.Vector3(),
-  });
-  const seededRef = useRef(false);
-
-  useLayoutEffect(() => {
-    const mesh = instancedRef.current;
-    if (!mesh) return;
-    const { pos, quat, scale, mat } = tmp.current;
-    quat.identity();
-    for (let i = 0; i < ORB_POINT_COUNT; i++) {
-      pos.randomDirection().multiplyScalar(ORB_POINT_SHELL_RADIUS);
-      scale.setScalar(ORB_POINT_SIZE);
-      mat.compose(pos, quat, scale);
-      mesh.setMatrixAt(i, mat);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    seededRef.current = true;
-  }, []);
-
-  useFrame((_, delta) => {
-    const mesh = instancedRef.current;
-    const lines = linesRef.current;
-    if (!mesh || !seededRef.current) return;
-
-    const lineAttr = lines?.geometry.attributes.position as
-      | THREE.BufferAttribute
-      | undefined;
-    const { pos, quat, scale, mat, axis } = tmp.current;
-    let lineVertex = 0;
-
-    const offset = 1e-4 * performance.now();
-    const spin = delta * ORB_POINT_SPIN_PER_SEC * motionScale;
-
-    for (let i = 0; i < ORB_POINT_COUNT; i++) {
-      mesh.getMatrixAt(i, mat);
-      mat.decompose(pos, quat, scale);
-
-      if (motionScale > 0) {
-        axis
-          .set(
-            Math.sin(i * 100 + offset),
-            Math.cos(-i * 10 + offset),
-            Math.sin(i * 1 + offset),
-          )
-          .normalize();
-        pos.applyAxisAngle(axis, spin);
-        pos.normalize().multiplyScalar(ORB_POINT_SHELL_RADIUS);
-      }
-
-      scale.setScalar(ORB_POINT_SIZE);
-      mat.compose(pos, quat, scale);
-      mesh.setMatrixAt(i, mat);
-
-      if (lineAttr) {
-        lineAttr.setXYZ(lineVertex++, 0, 0, 0);
-        lineAttr.setXYZ(lineVertex++, pos.x, pos.y, pos.z);
-      }
-    }
-
-    mesh.instanceMatrix.needsUpdate = true;
-    if (lineAttr && lines) {
-      lineAttr.needsUpdate = true;
-      lines.geometry.setDrawRange(0, lineVertex);
-    }
-  });
-
-  return (
-    <group>
-      <instancedMesh
-        ref={instancedRef}
-        args={[shellGeo, shellMat, ORB_POINT_COUNT]}
-        frustumCulled={false}
-        raycast={noRaycast}
-      />
-      <lineSegments
-        ref={linesRef}
-        geometry={lineGeo}
-        material={lineMat}
-        frustumCulled={false}
-        raycast={noRaycast}
-      />
-    </group>
-  );
-}
-
 function EmitterModel({
   emitterPosition,
 }: {
@@ -295,8 +142,6 @@ function EmitterModel({
       <Suspense fallback={null}>
         <PrismEmitter motionScale={1} />
       </Suspense>
-
-      <OrbRayPointField motionScale={1} />
     </group>
   );
 }
@@ -465,13 +310,15 @@ export default function ModelViewer({
   projectionTargetsNdc,
   onSceneReady,
   orbShellPxRef,
+  showProjectionBeams = true,
+  pauseAnimation = false,
 }: ModelViewerProps) {
-  const emitterPosition = useMemo(() => randomEmitterOrigin(), []);
+  const emitterPosition = CENTER_EMITTER_ORIGIN;
 
   return (
     <Canvas
       dpr={[1, 1.5]}
-      frameloop="always"
+      frameloop={pauseAnimation ? "never" : "always"}
       camera={{ position: [0, 0, 3.5], fov: 38 }}
     >
       <color attach="background" args={["#000000"]} />
@@ -485,10 +332,12 @@ export default function ModelViewer({
       ) : null}
       <VesselSphere />
       <EmitterModel emitterPosition={emitterPosition} />
-      <ProjectionBeams
-        projectionTargetsNdc={projectionTargetsNdc}
-        emitterPosition={emitterPosition}
-      />
+      {showProjectionBeams ? (
+        <ProjectionBeams
+          projectionTargetsNdc={projectionTargetsNdc}
+          emitterPosition={emitterPosition}
+        />
+      ) : null}
       <HologramPostFx />
       <SceneReadySignal onSceneReady={onSceneReady} />
     </Canvas>

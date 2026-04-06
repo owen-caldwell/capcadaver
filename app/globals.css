@@ -229,6 +229,12 @@ body {
   border-color: currentColor;
 }
 
+/** 1:1 mugshot tile: no extra padding so the link box stays square. */
+.hologram-link.accomplice-mugshot-link {
+  padding: 0;
+  line-height: 0;
+}
+
 /** Map venue link: red text; hover square uses same color as the label. */
 .hologram-link-venue {
   color: #e41e1e;

@@ -4,6 +4,8 @@ export type ArtistRecord = {
   id: string;
   name: string;
   url: string | null;
+  /** Mugshot / primary image URL (optional column on `artists`). */
+  image_url: string | null;
   sort_order: number;
   is_active: boolean;
 };
@@ -40,7 +42,7 @@ export async function getPublicData() {
         .order("date", { ascending: true }),
       supabase
         .from("artists")
-        .select("id, name, url, sort_order, is_active")
+        .select("id, name, url, image_url, sort_order, is_active")
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),

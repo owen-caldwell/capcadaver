@@ -62,7 +62,7 @@ export default async function AdminPage() {
         .order("date", { ascending: false, nullsFirst: false }),
       supabase
         .from("artists")
-        .select("id, name, url, sort_order, is_active")
+        .select("id, name, url, image_url, sort_order, is_active")
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
       supabase.from("site_content").select("key, value"),
@@ -154,7 +154,7 @@ export default async function AdminPage() {
 
         <section className="rounded-xl border border-white/25 bg-black p-6">
           <h2 className="text-lg font-semibold text-white">Add artist</h2>
-          <form action={createArtistAction} className="mt-4 grid gap-3 md:grid-cols-3">
+          <form action={createArtistAction} className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
             <div>
               <label
                 htmlFor="artist-name"
@@ -174,12 +174,28 @@ export default async function AdminPage() {
                 htmlFor="artist-url"
                 className="mb-1 block text-xs font-medium text-white/65"
               >
-                URL
+                Link URL
               </label>
               <input
                 id="artist-url"
                 name="url"
                 className="w-full rounded-md border border-white/30 bg-black px-3 py-2 text-sm text-white placeholder:text-white/40"
+                placeholder="https://…"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="artist-image-url"
+                className="mb-1 block text-xs font-medium text-white/65"
+              >
+                Mugshot image URL
+              </label>
+              <input
+                id="artist-image-url"
+                name="image_url"
+                type="url"
+                className="w-full rounded-md border border-white/30 bg-black px-3 py-2 text-sm text-white placeholder:text-white/40"
+                placeholder="https://… (optional)"
               />
             </div>
             <div>
@@ -199,7 +215,7 @@ export default async function AdminPage() {
             </div>
             <button
               type="submit"
-              className="cursor-pointer text-left text-sm underline underline-offset-2 md:col-span-3"
+              className="cursor-pointer text-left text-sm underline underline-offset-2 lg:col-span-4"
             >
               Add artist
             </button>
@@ -213,7 +229,8 @@ export default async function AdminPage() {
               >
                 <span className="min-w-0 flex-1 truncate">
                   {artist.name}
-                  {artist.url ? ` - ${artist.url}` : ""}
+                  {artist.url ? ` · ${artist.url}` : ""}
+                  {artist.image_url ? ` · img: ${artist.image_url}` : ""}
                 </span>
                 <form action={deleteArtistAction}>
                   <input type="hidden" name="id" value={artist.id} />

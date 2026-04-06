@@ -26,6 +26,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <link rel="preload" href="/skellyrun2.gif" as="image" />
+      </head>
       <body
         className={`${b612Mono.variable} ${shareTechMono.variable} flex min-h-screen flex-col antialiased`}
       >

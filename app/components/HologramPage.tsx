@@ -28,6 +28,7 @@ type Artist = {
   id: string;
   name: string;
   url: string | null;
+  image_url: string | null;
 };
 
 type Event = {
@@ -54,6 +55,15 @@ function normalizedUrl(url: string | null) {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 
+function accompliceInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 function toNdc(value: number, size: number) {
   return (value / size) * 2 - 1;
 }
@@ -70,6 +80,26 @@ function panelToNdc(panelRect: DOMRect, shellRect: DOMRect): NdcPoint[] {
     { x: toNdc(left, shellRect.width), y: -toNdc(bottom, shellRect.height) },
   ];
 }
+
+/** After `splashHidden`, wait for opacity transition (see `.splash-screen` ~350ms). */
+const SPLASH_FADE_OUT_BUFFER_MS = 380;
+/** Additional pause after splash is gone before hologram windows spawn from the orb. */
+const POST_SPLASH_SPAWN_DELAY_MS = 3000;
+/**
+ * After `windowSpawnAllowed`, defer prism→panel beams until spawn motion is underway
+ * (measure + rAF + eased motion — avoids lines-only frames before panels read).
+ */
+const PROJECTION_BEAMS_DELAY_MS = 360;
+
+/** Easter-egg overlay; place `public/skellyrun2.gif`. */
+const SKELLY_GIF_SRC = "/skellyrun2.gif";
+/**
+ * One full GIF loop duration — used to flip horizontal mirror each loop (browsers don’t expose loop events).
+ * Set to match `skellyrun2.gif` net loop time.
+ */
+const SKELLY_GIF_LOOP_MS = 3200;
+/** No pointer/keyboard/scroll activity for this long → idle (skelly + paused WebGL). */
+const USER_IDLE_AFTER_MS = 60_000;
 
 const CAPCAD_HEAD_GLTF = "/capcad-head/Cap36-NoRoot-Small.gltf";
 
@@ -178,21 +208,104 @@ export default function HologramPage({
   const shellRef = useRef<HTMLDivElement>(null);
   const orbShellPxRef = useRef({ x: 0, y: 0 });
   const infoRef = useRef<HTMLDivElement>(null);
-  const artistsRef = useRef<HTMLDivElement>(null);
   const upcomingRef = useRef<HTMLDivElement>(null);
   const locationRef = useRef<HTMLDivElement>(null);
-  const pastRef = useRef<HTMLDivElement>(null);
   const [projectionTargetsNdc, setProjectionTargetsNdc] = useState<NdcPoint[]>(
     [],
   );
   const [sceneReady, setSceneReady] = useState(false);
   const [minDurationElapsed, setMinDurationElapsed] = useState(false);
   const [splashHidden, setSplashHidden] = useState(false);
-  /** True after splash opacity transition (see `.splash-screen` 350ms) so window spawn does not overlap the fade. */
+  /** True after splash fade buffer + `POST_SPLASH_SPAWN_DELAY_MS` (desktop window spawn from orb). */
   const [windowSpawnAllowed, setWindowSpawnAllowed] = useState(false);
+  const [projectionBeamsReady, setProjectionBeamsReady] = useState(false);
+  const [isUserIdle, setIsUserIdle] = useState(false);
+  const [skellyMirror, setSkellyMirror] = useState(false);
+  const [skellyPlayKey, setSkellyPlayKey] = useState(0);
+  const idleTimerRef = useRef<number | undefined>(undefined);
+  const isIdleRef = useRef(false);
   const [hoveredHoloWindowId, setHoveredHoloWindowId] = useState<string | null>(
     null,
   );
+
+  useEffect(() => {
+    if (!windowSpawnAllowed) {
+      setProjectionBeamsReady(false);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setProjectionBeamsReady(true);
+    }, PROJECTION_BEAMS_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [windowSpawnAllowed]);
+
+  const scheduleIdleTimer = useCallback(() => {
+    window.clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = window.setTimeout(() => {
+      isIdleRef.current = true;
+      setIsUserIdle(true);
+      setSkellyPlayKey((k) => k + 1);
+    }, USER_IDLE_AFTER_MS);
+  }, []);
+
+  const bumpUserActivity = useCallback(() => {
+    if (!windowSpawnAllowed) return;
+    if (isIdleRef.current) {
+      isIdleRef.current = false;
+      setIsUserIdle(false);
+    }
+    scheduleIdleTimer();
+  }, [windowSpawnAllowed, scheduleIdleTimer]);
+
+  useEffect(() => {
+    if (!windowSpawnAllowed) {
+      window.clearTimeout(idleTimerRef.current);
+      isIdleRef.current = false;
+      setIsUserIdle(false);
+      return;
+    }
+
+    isIdleRef.current = false;
+    setIsUserIdle(false);
+    scheduleIdleTimer();
+
+    const opts = { capture: true, passive: true } as const;
+    const types = [
+      "pointerdown",
+      "pointermove",
+      "keydown",
+      "scroll",
+      "wheel",
+      "touchstart",
+    ] as const;
+    for (const t of types) {
+      window.addEventListener(t, bumpUserActivity, opts);
+    }
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") bumpUserActivity();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.clearTimeout(idleTimerRef.current);
+      document.removeEventListener("visibilitychange", onVisibility);
+      for (const t of types) {
+        window.removeEventListener(t, bumpUserActivity, opts);
+      }
+    };
+  }, [windowSpawnAllowed, bumpUserActivity, scheduleIdleTimer]);
+
+  useEffect(() => {
+    if (!isUserIdle || !windowSpawnAllowed) {
+      setSkellyMirror(false);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setSkellyMirror((m) => !m);
+    }, SKELLY_GIF_LOOP_MS);
+    return () => window.clearInterval(id);
+  }, [isUserIdle, windowSpawnAllowed]);
 
   const onHoverHoloWindowChange = useCallback((id: string | null) => {
     setHoveredHoloWindowId(id);
@@ -227,7 +340,10 @@ export default function HologramPage({
       setWindowSpawnAllowed(false);
       return;
     }
-    const id = window.setTimeout(() => setWindowSpawnAllowed(true), 380);
+    const id = window.setTimeout(
+      () => setWindowSpawnAllowed(true),
+      SPLASH_FADE_OUT_BUFFER_MS + POST_SPLASH_SPAWN_DELAY_MS,
+    );
     return () => window.clearTimeout(id);
   }, [splashHidden]);
 
@@ -239,10 +355,8 @@ export default function HologramPage({
 
     const panelEls = [
       infoRef.current,
-      artistsRef.current,
       upcomingRef.current,
       locationRef.current,
-      pastRef.current,
     ].filter(Boolean) as HTMLDivElement[];
 
     const targets = panelEls.flatMap((panelEl) =>
@@ -259,10 +373,8 @@ export default function HologramPage({
     resizeObserver.observe(shellEl);
     [
       infoRef.current,
-      artistsRef.current,
       upcomingRef.current,
       locationRef.current,
-      pastRef.current,
     ].forEach((panel) => {
       if (panel) resizeObserver.observe(panel);
     });
@@ -381,6 +493,8 @@ export default function HologramPage({
             projectionTargetsNdc={projectionTargetsNdc}
             onSceneReady={() => setSceneReady(true)}
             orbShellPxRef={orbShellPxRef}
+            showProjectionBeams={windowSpawnAllowed && projectionBeamsReady}
+            pauseAnimation={isUserIdle}
           />
         </div>
 
@@ -391,6 +505,18 @@ export default function HologramPage({
           aria-hidden={!showSplash}
         >
           <div className="splash-screen-inner" role="status" aria-live="polite">
+            {showSplash ? (
+              <img
+                src={SKELLY_GIF_SRC}
+                alt=""
+                width={1}
+                height={1}
+                decoding="async"
+                fetchPriority="high"
+                className="pointer-events-none fixed top-0 left-0 h-px w-px overflow-hidden opacity-0"
+                aria-hidden
+              />
+            ) : null}
             <p className="font-cyber-display splash-screen-title">CAPCADAVER</p>
             <p className="splash-screen-subtitle">
               {completionPhase
@@ -406,8 +532,13 @@ export default function HologramPage({
         </div>
 
         <HologramWindowStackProvider>
-          <main className="relative z-10 mx-auto flex min-h-screen max-w-[1200px] flex-col justify-center gap-4 p-4 md:p-6">
-            <section className="grid grid-cols-1 gap-4 md:grid-cols-[1.2fr_1fr]">
+          <main
+            className={`relative z-10 mx-auto flex min-h-screen max-w-[1200px] flex-col justify-center gap-4 p-4 md:p-6 ${
+              !windowSpawnAllowed ? "invisible pointer-events-none" : ""
+            }`}
+            aria-hidden={!windowSpawnAllowed}
+          >
+            <section className="relative isolate grid grid-cols-1 place-items-start gap-4 md:grid-cols-[1.2fr_1fr]">
               <DraggableHologramWindow
                 panelRef={infoRef}
                 onPositionChange={updateProjectionTargets}
@@ -418,6 +549,8 @@ export default function HologramPage({
                 windowSpawnAllowed={windowSpawnAllowed}
                 spawnOrder={0}
                 holoWindowId="dossier"
+                desktopPlacement="center-left"
+                mobileZIndex={20}
                 dimmed={
                   hoveredHoloWindowId !== null &&
                   hoveredHoloWindowId !== "dossier"
@@ -431,32 +564,10 @@ export default function HologramPage({
                   SUBJECT DOSSIER
                 </p>
                 <div className="mt-3 flex flex-col md:flex-row gap-4">
-                  <div className="border border-white/25 bg-white/5 p-2 mx-auto w-full max-w-[min(100%,360px)] aspect-square md:mx-0 md:w-[320px] md:h-[320px] md:max-w-none md:shrink-0">
-                    <Canvas
-                      className="h-full w-full"
-                      dpr={[1, 1.5]}
-                      frameloop="always"
-                      camera={{ position: [0, 12, 0], fov: 10 }}
-                    >
-                      <color attach="background" args={["#000000"]} />
-                      {/*
-                    webgpu_postprocessing.html: Scene fog + lights.
-                    Original uses Fog(0x000000, 1, 1000) at ~400-unit scale; near/far
-                    tightened here so falloff reads in the small portrait frustum.
-                  */}
-                      <fog attach="fog" args={["#000000", 0, 14]} />
-                      <ambientLight color="#cccccc" intensity={15} />
-                      <Suspense fallback={null}>
-                        <CaptainCadaverPortrait />
-                      </Suspense>
-                      <PortraitPostFx />
-                    </Canvas>
-                  </div>
-                  <div className="text-sm text-white/90">
+                  <div className="min-w-0 flex-1 flex flex-col text-sm text-white/90">
                     <p className="font-cyber-display text-xl text-white">
                       {subjectName}
                     </p>
-                    <p className="mt-1 text-white/75">Alias: {subjectAlias}</p>
                     <div className="mt-3 space-y-1">
                       <p>
                         <span className="text-white/70">Height:</span>{" "}
@@ -479,11 +590,31 @@ export default function HologramPage({
                         {subjectStatus}
                       </p>
                     </div>
-                    <p className="mt-3 whitespace-pre-wrap text-white/80">
-                      {bio || "No extended intelligence available."}
-                    </p>
+                  </div>
+                  <div className="border border-white/25 bg-white/5 p-2 mx-auto w-full max-w-[min(100%,360px)] aspect-square md:mx-0 md:w-[320px] md:h-[320px] md:max-w-none md:shrink-0">
+                    <Canvas
+                      className="h-full w-full"
+                      dpr={[1, 1.5]}
+                      frameloop={isUserIdle ? "never" : "always"}
+                      camera={{ position: [0, 20, 0], fov: 15 }}
+                    >
+                      <color attach="background" args={["#000000"]} />
+                      {/*
+                    webgpu_postprocessing.html: Scene fog + lights.
+                    Original uses Fog(0x000000, 1, 1000) at ~400-unit scale; near/far
+                    tightened here so falloff reads in the small portrait frustum.
+                  */}
+                      <ambientLight color="#cccccc" intensity={15} />
+                      <Suspense fallback={null}>
+                        <CaptainCadaverPortrait />
+                      </Suspense>
+                      <PortraitPostFx />
+                    </Canvas>
                   </div>
                 </div>
+                <p className="mt-4 w-full max-w-none whitespace-pre-wrap text-sm text-white/80">
+                  {bio || "No extended intelligence available."}
+                </p>
                 <div className="mt-4 flex gap-4 text-xs">
                   <Link href="/admin" className="hologram-link">
                     ADMIN
@@ -492,6 +623,94 @@ export default function HologramPage({
                     CONTACT HANDLER
                   </Link>
                 </div>
+                <h3 className="font-cyber-display mb-3 mt-8 text-[11px] uppercase tracking-[0.22em] text-white/80">
+                  Criminal History
+                </h3>
+                {pastEvents.length === 0 ? (
+                  <p className="text-sm text-white/70">No past events.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm text-white/80">
+                      <thead>
+                        <tr className="border-b border-white/25">
+                          <th className="py-2 pr-4 font-medium">Date</th>
+                          <th className="py-2 pr-4 font-medium">Artist</th>
+                          <th className="py-2 pr-4 font-medium">Venue</th>
+                          <th className="py-2 font-medium">City</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pastEvents.map((event) => (
+                          <tr
+                            key={event.id}
+                            className="border-y border-white/20"
+                          >
+                            <td className="py-2 pr-4">{event.date ?? "TBD"}</td>
+                            <td className="py-2 pr-4">
+                              {event.artist ?? "TBA"}
+                            </td>
+                            <td className="py-2 pr-4">
+                              {event.venue ?? "Venue TBA"}
+                            </td>
+                            <td className="py-2">{event.city ?? "City TBA"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <h2 className="font-cyber-display mb-3 mt-8 text-[11px] uppercase tracking-[0.22em] text-white/85">
+                  Known Accomplices
+                </h2>
+                {artists.length === 0 ? (
+                  <p className="text-sm text-white/70">No accomplices logged.</p>
+                ) : (
+                  <ul className="mt-1 grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3">
+                    {artists.map((artist) => {
+                      const linkHref = normalizedUrl(artist.url);
+                      const imgSrc = normalizedUrl(artist.image_url);
+                      const mugshot = imgSrc ? (
+                        <img
+                          src={imgSrc}
+                          alt={artist.name}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center bg-white/[0.06] font-cyber-display text-lg tracking-wide text-white/70">
+                          {accompliceInitials(artist.name)}
+                        </div>
+                      );
+                      return (
+                        <li
+                          key={artist.id}
+                          className="flex flex-col items-center gap-2 text-center"
+                        >
+                          {linkHref ? (
+                            <a
+                              href={linkHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hologram-link accomplice-mugshot-link mx-auto aspect-square w-full max-w-[min(100%,7.5rem)] shrink-0 overflow-hidden bg-white/[0.06]"
+                              aria-label={`${artist.name} (opens in new tab)`}
+                            >
+                              {mugshot}
+                            </a>
+                          ) : (
+                            <div
+                              className="mx-auto aspect-square w-full max-w-[min(100%,7.5rem)] shrink-0 overflow-hidden border border-white/25 bg-white/[0.06]"
+                              aria-hidden
+                            >
+                              {mugshot}
+                            </div>
+                          )}
+                          <p className="max-w-[min(100%,7.5rem)] text-center text-xs leading-snug text-white/90">
+                            {artist.name}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </DraggableHologramWindow>
 
               <DraggableHologramWindow
@@ -504,6 +723,7 @@ export default function HologramPage({
                 windowSpawnAllowed={windowSpawnAllowed}
                 spawnOrder={1}
                 holoWindowId="countdown"
+                mobileZIndex={30}
                 dimmed={
                   hoveredHoloWindowId !== null &&
                   hoveredHoloWindowId !== "countdown"
@@ -514,7 +734,7 @@ export default function HologramPage({
                 <div className="hologram-corner hologram-corner-bl" />
                 <div className="hologram-corner hologram-corner-br" />
                 <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/85">
-                  Primary Operation Countdown
+                  COUNTDOWN
                 </h3>
                 {!upcomingEvent ? (
                   <p className="text-sm text-white/75">
@@ -527,7 +747,7 @@ export default function HologramPage({
                         ? "LIVE NOW"
                         : `${countdown?.days ?? "00"}:${countdown?.hours ?? "00"}:${countdown?.minutes ?? "00"}:${countdown?.seconds ?? "00"}`}
                     </p>
-                    <div className="border-t border-white/25 pt-3 text-sm text-white/90">
+                    <div className="flex flex-col gap-2 items-center border-t border-white/25 pt-3 text-sm text-white/90">
                       <p>
                         <span className="text-white/75">Date:</span>{" "}
                         {upcomingEvent.date ?? "TBD"}
@@ -552,7 +772,7 @@ export default function HologramPage({
                       {contactInfo ? (
                         <p className="mt-2 text-white/75">{contactInfo}</p>
                       ) : null}
-                      <div className="mt-3">
+                      <div className="mt-3 w-full">
                         {upcomingEvent.ticket_url ? (
                           <a
                             href={
@@ -561,9 +781,9 @@ export default function HologramPage({
                             }
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="hologram-link"
+                            className="block font-black text-4xl w-full text-center tracking-[0.12em] border-2 border-white/25 px-4 py-4 hover:bg-white hover:text-black transition-colors duration-200"
                           >
-                            GET TICKETS
+                            TICKETS
                           </a>
                         ) : (
                           <span className="text-white/70">
@@ -575,83 +795,18 @@ export default function HologramPage({
                   </div>
                 )}
               </DraggableHologramWindow>
-            </section>
 
-            <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <DraggableHologramWindow
-                panelRef={artistsRef}
+                panelRef={locationRef}
                 onPositionChange={updateProjectionTargets}
-                className="hologram-window relative p-4"
+                className="hologram-window relative p-4 md:col-span-2"
                 spawnShellRef={shellRef}
                 orbShellPxRef={orbShellPxRef}
                 splashHidden={splashHidden}
                 windowSpawnAllowed={windowSpawnAllowed}
                 spawnOrder={2}
-                holoWindowId="accomplices"
-                dimmed={
-                  hoveredHoloWindowId !== null &&
-                  hoveredHoloWindowId !== "accomplices"
-                }
-              >
-                <div className="hologram-corner hologram-corner-tl" />
-                <div className="hologram-corner hologram-corner-tr" />
-                <div className="hologram-corner hologram-corner-bl" />
-                <div className="hologram-corner hologram-corner-br" />
-                <h2 className="font-cyber-display text-[11px] uppercase tracking-[0.22em] text-white/85">
-                  Known Accomplices
-                </h2>
-                {artists.length === 0 ? (
-                  <p className="mt-3 text-sm text-white/70">
-                    No accomplices logged.
-                  </p>
-                ) : (
-                  <ul className="mt-3 space-y-2 text-sm text-white/90">
-                    {artists.map((artist) => (
-                      <li
-                        key={artist.id}
-                        className="flex items-center gap-3 border border-white/20 bg-white/5 p-2"
-                      >
-                        <div className="flex h-10 w-10 items-center justify-center border border-white/25 text-xs text-white/85">
-                          {artist.name
-                            .split(" ")
-                            .map((part) => part[0])
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          {artist.url ? (
-                            <a
-                              href={normalizedUrl(artist.url) ?? undefined}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="hologram-link"
-                            >
-                              {artist.name}
-                            </a>
-                          ) : (
-                            <p className="truncate">{artist.name}</p>
-                          )}
-                          <p className="text-[11px] uppercase tracking-[0.12em] text-white/60">
-                            Mugshot Reference
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </DraggableHologramWindow>
-
-              <DraggableHologramWindow
-                panelRef={locationRef}
-                onPositionChange={updateProjectionTargets}
-                className="hologram-window relative p-4"
-                spawnShellRef={shellRef}
-                orbShellPxRef={orbShellPxRef}
-                splashHidden={splashHidden}
-                windowSpawnAllowed={windowSpawnAllowed}
-                spawnOrder={3}
                 holoWindowId="location"
+                mobileZIndex={10}
                 dimmed={
                   hoveredHoloWindowId !== null &&
                   hoveredHoloWindowId !== "location"
@@ -662,13 +817,13 @@ export default function HologramPage({
                 <div className="hologram-corner hologram-corner-bl" />
                 <div className="hologram-corner hologram-corner-br" />
                 <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/85">
-                  Last Known Location
+                  VENUE
                 </h3>
-                <div className="border border-white/25 bg-white/5">
+                <div className="w-full min-w-[min(100%,26.25rem)] max-w-[min(100%,57rem)] border border-white/25 bg-white/5 sm:min-w-[30rem]">
                   <svg
                     viewBox={`0 0 ${NYC_MAP_VIEW} ${NYC_MAP_VIEW}`}
                     overflow="hidden"
-                    className="aspect-square max-w-full"
+                    className="aspect-square block h-auto w-full max-w-full"
                     role="img"
                     aria-label={`NYC map: ${LAST_KNOWN_VENUE_LABEL}, ${lastKnownCoordinates}`}
                   >
@@ -734,71 +889,28 @@ export default function HologramPage({
                 </p>
               </DraggableHologramWindow>
             </section>
-
-            <section>
-              <DraggableHologramWindow
-                panelRef={pastRef}
-                onPositionChange={updateProjectionTargets}
-                className="hologram-window relative p-4"
-                spawnShellRef={shellRef}
-                orbShellPxRef={orbShellPxRef}
-                splashHidden={splashHidden}
-                windowSpawnAllowed={windowSpawnAllowed}
-                spawnOrder={4}
-                holoWindowId="archive"
-                dimmed={
-                  hoveredHoloWindowId !== null &&
-                  hoveredHoloWindowId !== "archive"
-                }
-              >
-                <div className="hologram-corner hologram-corner-tl" />
-                <div className="hologram-corner hologram-corner-tr" />
-                <div className="hologram-corner hologram-corner-bl" />
-                <div className="hologram-corner hologram-corner-br" />
-                <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/80">
-                  Archived Operations
-                </h3>
-                {pastEvents.length === 0 ? (
-                  <p className="text-sm text-white/70">No past events.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm text-white/80">
-                      <thead>
-                        <tr className="border-b border-white/25">
-                          <th className="py-2 pr-4 font-medium">Date</th>
-                          <th className="py-2 pr-4 font-medium">Artist</th>
-                          <th className="py-2 pr-4 font-medium">Venue</th>
-                          <th className="py-2 font-medium">City</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pastEvents.map((event) => (
-                          <tr
-                            key={event.id}
-                            className="border-y border-white/20"
-                          >
-                            <td className="py-2 pr-4">{event.date ?? "TBD"}</td>
-                            <td className="py-2 pr-4">
-                              {event.artist ?? "TBA"}
-                            </td>
-                            <td className="py-2 pr-4">
-                              {event.venue ?? "Venue TBA"}
-                            </td>
-                            <td className="py-2">{event.city ?? "City TBA"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </DraggableHologramWindow>
-            </section>
           </main>
           <HologramCrosshair
-            active={splashHidden}
+            active={windowSpawnAllowed}
             onHoverWindowChange={onHoverHoloWindowChange}
           />
         </HologramWindowStackProvider>
+
+        {isUserIdle && windowSpawnAllowed ? (
+          <div
+            className="pointer-events-none fixed inset-0 z-[200] flex items-end justify-center bg-black/10"
+            aria-hidden
+          >
+            <img
+              key={skellyPlayKey}
+              src={SKELLY_GIF_SRC}
+              alt=""
+              className="h-auto w-full max-h-[min(100dvh,100vh)] object-contain object-bottom"
+              style={{ transform: skellyMirror ? "scaleX(-1)" : undefined }}
+              decoding="async"
+            />
+          </div>
+        ) : null}
       </div>
     </>
   );

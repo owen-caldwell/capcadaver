@@ -16,6 +16,11 @@ const artistSchema = z.object({
     .trim()
     .optional()
     .transform((v) => (v && v.length > 0 ? v : null)),
+  image_url: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : null)),
   sort_order: z.coerce.number().int().default(0),
 });
 
@@ -75,12 +80,14 @@ export async function createArtistAction(formData: FormData) {
   const parsed = artistSchema.parse({
     name: formData.get("name"),
     url: formData.get("url"),
+    image_url: formData.get("image_url"),
     sort_order: formData.get("sort_order"),
   });
 
   const { error } = await supabase.from("artists").insert({
     name: parsed.name,
     url: parsed.url,
+    image_url: parsed.image_url,
     sort_order: parsed.sort_order,
     is_active: true,
   });

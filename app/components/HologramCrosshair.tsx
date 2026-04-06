@@ -175,7 +175,13 @@ export function HologramCrosshair({
           vectorEffect="non-scaling-stroke"
         />
       ))}
-      <circle cx={mx} cy={my} r={1.25} fill="rgba(255, 255, 255, 0.95)" />
+      <rect
+        x={mx - 1.5}
+        y={my - 1.5}
+        width={3}
+        height={3}
+        fill="rgba(255, 255, 255, 0.95)"
+      />
     </svg>
   );
 }
