@@ -42,16 +42,6 @@ type ModelViewerProps = {
   pauseAnimation?: boolean;
 };
 
-const JUNIES_ROOM_GLB = "/junies-room/JunieV3.glb";
-const JUNIES_ROOM_SCALE = 0.35;
-const JUNIES_ROOM_ROTATE_SPEED = 0.06;
-/**
- * Manual offset applied *after* bbox centering, in the model's local units
- * (before JUNIES_ROOM_SCALE). Positive X = shift room left (camera moves right),
- * positive Y = shift room down (camera moves up), positive Z = shift room back (camera moves forward).
- */
-const JUNIES_ROOM_OFFSET = { x: 10, y: -2, z: 200 };
-
 const PRISM_GLTF = "/prism/scene.gltf";
 
 /** World scale for prism mesh (model units ~3m tall). */
@@ -214,54 +204,6 @@ function HologramPostFx() {
   );
 }
 
-function JuniesRoom() {
-  const { scene } = useGLTF(JUNIES_ROOM_GLB);
-  const groupRef = useRef<THREE.Group>(null);
-
-  const clone = useMemo(() => {
-    const c = scene.clone(true);
-    c.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        (obj as THREE.Mesh).raycast = noRaycast;
-      }
-    });
-    return c;
-  }, [scene]);
-
-  useLayoutEffect(() => {
-    const g = groupRef.current;
-    if (!g) return;
-    g.scale.setScalar(JUNIES_ROOM_SCALE);
-    g.updateWorldMatrix(true, true);
-    const box = new THREE.Box3().setFromObject(g);
-    if (box.isEmpty()) return;
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    clone.position.sub(center.divideScalar(JUNIES_ROOM_SCALE));
-    clone.position.add(
-      new THREE.Vector3(
-        JUNIES_ROOM_OFFSET.x,
-        JUNIES_ROOM_OFFSET.y,
-        JUNIES_ROOM_OFFSET.z,
-      ),
-    );
-  }, [clone]);
-
-  useFrame((_, delta) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y += delta * JUNIES_ROOM_ROTATE_SPEED;
-    }
-  });
-
-  return (
-    <group ref={groupRef}>
-      <primitive object={clone} />
-    </group>
-  );
-}
-
-useGLTF.preload(JUNIES_ROOM_GLB);
-
 function SceneReadySignal({ onSceneReady }: { onSceneReady?: () => void }) {
   const hasNotifiedRef = useRef(false);
 
@@ -318,9 +260,6 @@ export default function ModelViewer({
           targetRef={orbShellPxRef}
         />
       ) : null}
-      <Suspense fallback={null}>
-        <JuniesRoom />
-      </Suspense>
       <EmitterModel emitterPosition={emitterPosition} />
       {showProjectionBeams ? (
         <ProjectionBeams
