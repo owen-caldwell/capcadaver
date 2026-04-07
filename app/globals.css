@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Giga-unused";
+  src: url("/fonts/Medium.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 :root {
   --background: #000000;
   --foreground: #ffffff;
@@ -10,8 +17,8 @@
   );
   --holo-window-bg: linear-gradient(
     120deg,
-    rgba(12, 12, 12, 0.7),
-    rgba(0, 0, 0, 0.68)
+    rgba(12, 12, 12, 0.08),
+    rgba(0, 0, 0, 0.06)
   );
   --holo-grid-color: rgba(255, 255, 255, 0.06);
   --holo-border: rgba(255, 255, 255, 0.35);
@@ -28,14 +35,19 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-b612-mono), ui-monospace, monospace;
-  --font-mono: var(--font-b612-mono), ui-monospace, monospace;
+  --font-sans: Helvetica, Arial, sans-serif;
+  --font-mono: Helvetica, Arial, sans-serif;
+}
+
+html {
+  overflow: hidden;
+  height: 100%;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-b612-mono), ui-monospace, monospace;
+  font-family: Helvetica, Arial, sans-serif;
 }
 
 @media (min-width: 768px) {
@@ -46,12 +58,12 @@ body {
 }
 
 .font-cyber-display {
-  font-family: var(--font-b612-mono), ui-monospace, monospace;
+  font-family: Helvetica, Arial, sans-serif;
 }
 
 /** Technical / segmented-style timer digits (Primary Operation Countdown). */
 .font-countdown {
-  font-family: var(--font-share-tech-mono), ui-monospace, monospace;
+  font-family: Helvetica, Arial, sans-serif;
 }
 
 /* Full-viewport bloom: one composited pass over WebGL canvas + HTML (see #holo-screen-bloom in HologramPage). */

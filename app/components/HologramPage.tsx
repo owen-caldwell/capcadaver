@@ -126,8 +126,6 @@ const RADAR_RING_STROKE_THIN = 0.32 * RADAR_UI_SCALE;
 const RADAR_RING_STROKE_OUTER = 0.48 * RADAR_UI_SCALE;
 const RADAR_DOT_R_CORE = 2.5 * RADAR_UI_SCALE;
 const RADAR_DOT_R_RING = 6 * RADAR_UI_SCALE;
-/** Coordinates sit just right of the pulse ring. */
-const MAP_BESIDE_DOT_X = LAST_KNOWN_MAP_DOT.x + RADAR_DOT_R_RING + MAP_FS(5);
 /** Map label / dot accent (must match `.map-blink-dot-*` in globals.css). */
 const MAP_ACCENT = "#e41e1e";
 
@@ -438,8 +436,110 @@ export default function HologramPage({
   const subjectBloodType = contentByKey.dossier_blood_type || "AB-";
   const subjectStatus = contentByKey.dossier_status || "AT LARGE";
   const subjectOrigin = contentByKey.dossier_origin || "Sector Nine";
-  const lastKnownCoordinates =
-    contentByKey.last_known_coordinates || "40.7246, -73.9901";
+
+  const countdownContent = (
+    <>
+      <div className="hologram-corner hologram-corner-tl" />
+      <div className="hologram-corner hologram-corner-tr" />
+      <div className="hologram-corner hologram-corner-bl" />
+      <div className="hologram-corner hologram-corner-br" />
+      <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/85">
+        COUNTDOWN
+      </h3>
+      {!upcomingEvent ? (
+        <p className="text-sm text-white/75">
+          No active operation scheduled.
+        </p>
+      ) : (
+        <div className="space-y-3" style={{ containerType: "inline-size" }}>
+          {countdown?.isLive ? (
+            <p
+              className="font-countdown leading-none tracking-[0.12em] tabular-nums text-white"
+              style={{ fontSize: "18cqi" }}
+            >
+              LIVE NOW
+            </p>
+          ) : (
+            <div className="flex w-full items-end justify-center">
+              {[
+                { value: countdown?.days ?? "00", label: "DAYS" },
+                { value: countdown?.hours ?? "00", label: "HRS" },
+                { value: countdown?.minutes ?? "00", label: "MIN" },
+                { value: countdown?.seconds ?? "00", label: "SEC" },
+              ].map((seg, i) => (
+                <div key={seg.label} className="flex items-end">
+                  <div className="flex flex-col items-center">
+                    <span
+                      className="font-countdown leading-none tabular-nums text-white"
+                      style={{ fontSize: "17cqi" }}
+                    >
+                      {seg.value}
+                    </span>
+                    <span
+                      className="mt-[0.3em] font-cyber-display tracking-[0.15em] text-white/50"
+                      style={{ fontSize: "4cqi" }}
+                    >
+                      {seg.label}
+                    </span>
+                  </div>
+                  {i < 3 ? (
+                    <span
+                      className="font-countdown leading-none text-white/40 mx-[0.5cqi] self-start"
+                      style={{ fontSize: "14cqi" }}
+                    >
+                      :
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex w-full flex-col gap-2 border-t border-white/25 pt-3 text-sm text-white/90">
+            <p className="flex w-full justify-between">
+              <span className="text-white/75">Date:</span>
+              <span>{upcomingEvent.date ?? "TBD"}</span>
+            </p>
+            <p className="flex w-full justify-between">
+              <span className="text-white/75">Artist:</span>
+              <span>{upcomingEvent.artist ?? "TBA"}</span>
+            </p>
+            <p className="flex w-full justify-between">
+              <span className="text-white/75">Venue:</span>
+              <span>{upcomingEvent.venue ?? "Venue TBA"}</span>
+            </p>
+            <p className="flex w-full justify-between">
+              <span className="text-white/75">City:</span>
+              <span>{upcomingEvent.city ?? "City TBA"}</span>
+            </p>
+            {upcomingEvent.notes ? (
+              <p className="mt-2 text-white/80">
+                {upcomingEvent.notes}
+              </p>
+            ) : null}
+            {contactInfo ? (
+              <p className="mt-2 text-white/75">{contactInfo}</p>
+            ) : null}
+            <div className="mt-3 w-full">
+              {upcomingEvent.ticket_url ? (
+                <a
+                  href={normalizedUrl(upcomingEvent.ticket_url) ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block font-black text-4xl w-full text-center tracking-[0.12em] border-2 border-white/25 px-4 py-4 hover:bg-white hover:text-black transition-colors duration-200"
+                >
+                  TICKETS
+                </a>
+              ) : (
+                <span className="text-white/70">
+                  Ticket link coming soon
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <>
@@ -482,7 +582,7 @@ export default function HologramPage({
       </svg>
       <div
         ref={shellRef}
-        className="relative min-h-screen overflow-hidden holo-fullscreen-bloom"
+        className="relative h-full overflow-hidden holo-fullscreen-bloom"
         aria-busy={showSplash}
       >
         <div
@@ -533,12 +633,20 @@ export default function HologramPage({
 
         <HologramWindowStackProvider>
           <main
-            className={`relative z-10 mx-auto flex min-h-screen max-w-[1200px] flex-col justify-center gap-4 p-4 md:p-6 ${
+            className={`relative z-10 h-full w-full overflow-y-auto overflow-x-hidden p-4 md:p-6 ${
               !windowSpawnAllowed ? "invisible pointer-events-none" : ""
             }`}
             aria-hidden={!windowSpawnAllowed}
           >
-            <section className="relative isolate grid grid-cols-1 place-items-start gap-4 md:grid-cols-[1.2fr_1fr]">
+            {/* Countdown: mobile — top of scroll column */}
+            <div
+              className="mb-4 w-full md:hidden hologram-window relative p-4"
+              data-holo-window="countdown-mobile"
+            >
+              {countdownContent}
+            </div>
+
+            <section className="relative isolate flex w-full max-w-[600px] flex-col gap-4">
               <DraggableHologramWindow
                 panelRef={infoRef}
                 onPositionChange={updateProjectionTargets}
@@ -549,8 +657,6 @@ export default function HologramPage({
                 windowSpawnAllowed={windowSpawnAllowed}
                 spawnOrder={0}
                 holoWindowId="dossier"
-                desktopPlacement="center-left"
-                mobileZIndex={20}
                 dimmed={
                   hoveredHoloWindowId !== null &&
                   hoveredHoloWindowId !== "dossier"
@@ -714,99 +820,15 @@ export default function HologramPage({
               </DraggableHologramWindow>
 
               <DraggableHologramWindow
-                panelRef={upcomingRef}
+                panelRef={locationRef}
                 onPositionChange={updateProjectionTargets}
                 className="hologram-window relative p-4"
                 spawnShellRef={shellRef}
                 orbShellPxRef={orbShellPxRef}
                 splashHidden={splashHidden}
                 windowSpawnAllowed={windowSpawnAllowed}
-                spawnOrder={1}
-                holoWindowId="countdown"
-                mobileZIndex={30}
-                dimmed={
-                  hoveredHoloWindowId !== null &&
-                  hoveredHoloWindowId !== "countdown"
-                }
-              >
-                <div className="hologram-corner hologram-corner-tl" />
-                <div className="hologram-corner hologram-corner-tr" />
-                <div className="hologram-corner hologram-corner-bl" />
-                <div className="hologram-corner hologram-corner-br" />
-                <h3 className="font-cyber-display mb-3 text-[11px] uppercase tracking-[0.22em] text-white/85">
-                  COUNTDOWN
-                </h3>
-                {!upcomingEvent ? (
-                  <p className="text-sm text-white/75">
-                    No active operation scheduled.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="font-countdown text-5xl leading-none tracking-[0.12em] tabular-nums text-white md:text-6xl">
-                      {countdown?.isLive
-                        ? "LIVE NOW"
-                        : `${countdown?.days ?? "00"}:${countdown?.hours ?? "00"}:${countdown?.minutes ?? "00"}:${countdown?.seconds ?? "00"}`}
-                    </p>
-                    <div className="flex flex-col gap-2 items-center border-t border-white/25 pt-3 text-sm text-white/90">
-                      <p>
-                        <span className="text-white/75">Date:</span>{" "}
-                        {upcomingEvent.date ?? "TBD"}
-                      </p>
-                      <p>
-                        <span className="text-white/75">Artist:</span>{" "}
-                        {upcomingEvent.artist ?? "TBA"}
-                      </p>
-                      <p>
-                        <span className="text-white/75">Venue:</span>{" "}
-                        {upcomingEvent.venue ?? "Venue TBA"}
-                      </p>
-                      <p>
-                        <span className="text-white/75">City:</span>{" "}
-                        {upcomingEvent.city ?? "City TBA"}
-                      </p>
-                      {upcomingEvent.notes ? (
-                        <p className="mt-2 text-white/80">
-                          {upcomingEvent.notes}
-                        </p>
-                      ) : null}
-                      {contactInfo ? (
-                        <p className="mt-2 text-white/75">{contactInfo}</p>
-                      ) : null}
-                      <div className="mt-3 w-full">
-                        {upcomingEvent.ticket_url ? (
-                          <a
-                            href={
-                              normalizedUrl(upcomingEvent.ticket_url) ??
-                              undefined
-                            }
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block font-black text-4xl w-full text-center tracking-[0.12em] border-2 border-white/25 px-4 py-4 hover:bg-white hover:text-black transition-colors duration-200"
-                          >
-                            TICKETS
-                          </a>
-                        ) : (
-                          <span className="text-white/70">
-                            Ticket link coming soon
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </DraggableHologramWindow>
-
-              <DraggableHologramWindow
-                panelRef={locationRef}
-                onPositionChange={updateProjectionTargets}
-                className="hologram-window relative p-4 md:col-span-2"
-                spawnShellRef={shellRef}
-                orbShellPxRef={orbShellPxRef}
-                splashHidden={splashHidden}
-                windowSpawnAllowed={windowSpawnAllowed}
                 spawnOrder={2}
                 holoWindowId="location"
-                mobileZIndex={10}
                 dimmed={
                   hoveredHoloWindowId !== null &&
                   hoveredHoloWindowId !== "location"
@@ -825,7 +847,7 @@ export default function HologramPage({
                     overflow="hidden"
                     className="aspect-square block h-auto w-full max-w-full"
                     role="img"
-                    aria-label={`NYC map: ${LAST_KNOWN_VENUE_LABEL}, ${lastKnownCoordinates}`}
+                    aria-label={`NYC map: ${LAST_KNOWN_VENUE_LABEL}`}
                   >
                     <image
                       href={NYC_MAP_SRC}
@@ -851,18 +873,6 @@ export default function HologramPage({
                         />
                       ))}
                     </g>
-                    <text
-                      x={MAP_BESIDE_DOT_X}
-                      y={LAST_KNOWN_MAP_DOT.y}
-                      textAnchor="start"
-                      dominantBaseline="middle"
-                      fill={MAP_ACCENT}
-                      fontSize={MAP_FS(11)}
-                      fontFamily="var(--font-b612-mono), ui-monospace, monospace"
-                      letterSpacing="0.1em"
-                    >
-                      {lastKnownCoordinates}
-                    </text>
                     <circle
                       cx={LAST_KNOWN_MAP_DOT.x}
                       cy={LAST_KNOWN_MAP_DOT.y}
@@ -890,6 +900,22 @@ export default function HologramPage({
               </DraggableHologramWindow>
             </section>
           </main>
+          {/* Countdown: desktop — pinned top-right */}
+          <div
+            className={`pointer-events-auto absolute top-6 right-6 z-20 hidden w-[460] md:block ${
+              !windowSpawnAllowed ? "invisible pointer-events-none" : ""
+            }`}
+            aria-hidden={!windowSpawnAllowed}
+          >
+            <div
+              className="hologram-window relative p-4"
+              ref={upcomingRef}
+              data-holo-window="countdown"
+            >
+              {countdownContent}
+            </div>
+          </div>
+
           <HologramCrosshair
             active={windowSpawnAllowed}
             onHoverWindowChange={onHoverHoloWindowChange}

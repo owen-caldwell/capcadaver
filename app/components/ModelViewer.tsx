@@ -42,6 +42,16 @@ type ModelViewerProps = {
   pauseAnimation?: boolean;
 };
 
+const JUNIES_ROOM_GLB = "/junies-room/JunieV3.glb";
+const JUNIES_ROOM_SCALE = 0.35;
+const JUNIES_ROOM_ROTATE_SPEED = 0.06;
+/**
+ * Manual offset applied *after* bbox centering, in the model's local units
+ * (before JUNIES_ROOM_SCALE). Positive X = shift room left (camera moves right),
+ * positive Y = shift room down (camera moves up), positive Z = shift room back (camera moves forward).
+ */
+const JUNIES_ROOM_OFFSET = { x: 10, y: -2, z: 200 };
+
 const PRISM_GLTF = "/prism/scene.gltf";
 
 /** World scale for prism mesh (model units ~3m tall). */
@@ -204,75 +214,53 @@ function HologramPostFx() {
   );
 }
 
-function VesselSphere() {
-  const meshRef = useRef<THREE.Mesh>(null);
+function JuniesRoom() {
+  const { scene } = useGLTF(JUNIES_ROOM_GLB);
+  const groupRef = useRef<THREE.Group>(null);
 
-  const gridTexture = useMemo(() => {
-    const size = 512;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+  const clone = useMemo(() => {
+    const c = scene.clone(true);
+    c.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        (obj as THREE.Mesh).raycast = noRaycast;
+      }
+    });
+    return c;
+  }, [scene]);
 
-    ctx.clearRect(0, 0, size, size);
-    const major = 64;
-    const minor = 16;
-    for (let x = 0; x <= size; x += minor) {
-      ctx.strokeStyle =
-        x % major === 0
-          ? "rgba(255, 255, 255, 0.45)"
-          : "rgba(205, 205, 205, 0.16)";
-      ctx.lineWidth = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, size);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= size; y += minor) {
-      ctx.strokeStyle =
-        y % major === 0
-          ? "rgba(255, 255, 255, 0.45)"
-          : "rgba(205, 205, 205, 0.16)";
-      ctx.lineWidth = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(size, y);
-      ctx.stroke();
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(7, 4);
-    texture.needsUpdate = true;
-    return texture;
-  }, []);
+  useLayoutEffect(() => {
+    const g = groupRef.current;
+    if (!g) return;
+    g.scale.setScalar(JUNIES_ROOM_SCALE);
+    g.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(g);
+    if (box.isEmpty()) return;
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    clone.position.sub(center.divideScalar(JUNIES_ROOM_SCALE));
+    clone.position.add(
+      new THREE.Vector3(
+        JUNIES_ROOM_OFFSET.x,
+        JUNIES_ROOM_OFFSET.y,
+        JUNIES_ROOM_OFFSET.z,
+      ),
+    );
+  }, [clone]);
 
   useFrame((_, delta) => {
-    if (!meshRef.current) return;
-
-    meshRef.current.rotation.y += delta * 0.14;
-    meshRef.current.rotation.z += delta * 0.05;
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * JUNIES_ROOM_ROTATE_SPEED;
+    }
   });
 
-  if (!gridTexture) return null;
-
   return (
-    <mesh ref={meshRef} raycast={noRaycast}>
-      <sphereGeometry args={[10, 48, 48]} />
-      <meshBasicMaterial
-        map={gridTexture}
-        color="#ffffff"
-        side={THREE.BackSide}
-        transparent
-        opacity={0.15}
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </mesh>
+    <group ref={groupRef}>
+      <primitive object={clone} />
+    </group>
   );
 }
+
+useGLTF.preload(JUNIES_ROOM_GLB);
 
 function SceneReadySignal({ onSceneReady }: { onSceneReady?: () => void }) {
   const hasNotifiedRef = useRef(false);
@@ -330,7 +318,9 @@ export default function ModelViewer({
           targetRef={orbShellPxRef}
         />
       ) : null}
-      <VesselSphere />
+      <Suspense fallback={null}>
+        <JuniesRoom />
+      </Suspense>
       <EmitterModel emitterPosition={emitterPosition} />
       {showProjectionBeams ? (
         <ProjectionBeams

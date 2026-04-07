@@ -3,22 +3,19 @@
 import {
   createContext,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
 } from "react";
-import { flushSync } from "react-dom";
 
 const HologramWindowStackContext = createContext<{
   bump: () => number;
 } | null>(null);
 
-/** Wrap desktop hologram layout so panels can call bump() and paint above siblings (borders over lower windows). */
+/** Kept for API compat — no longer drives z-stack since panels are static. */
 export function HologramWindowStackProvider({
   children,
 }: {
@@ -36,118 +33,22 @@ export function HologramWindowStackProvider({
   );
 }
 
-/** Matches Tailwind `md` — panels stay layout-fixed on small screens. */
-const MOBILE_MQ = "(max-width: 767px)";
-
-/** Jitter each window on load so they overlap like a messy desktop (desktop only). */
-function randomDesktopOffset() {
-  return {
-    x: Math.round((Math.random() - 0.5) * 340),
-    y: Math.round((Math.random() - 0.5) * 280),
-  };
-}
-
 const SPAWN_DURATION_MS = 560;
 const SPAWN_STAGGER_MS = 140;
-/** Desktop spawn: scale from prism (with translate) up to full panel size. */
 const SPAWN_START_SCALE = 0.07;
 
-/**
- * Clicking these should select, follow links, or interact — not start a panel drag.
- * Covers text copy, images, maps (svg), 3D (canvas), and form controls.
- */
-function isPointerOnNonDraggableContent(target: EventTarget | null): boolean {
-  const el =
-    target instanceof Element
-      ? target
-      : target instanceof Node
-        ? (target.parentElement ?? null)
-        : null;
-  if (!el) return false;
-
-  if (
-    el.closest(
-      [
-        "a[href]",
-        "button",
-        "input",
-        "textarea",
-        "select",
-        "option",
-        "label",
-        "img",
-        "picture",
-        "canvas",
-        "video",
-        "audio",
-        "iframe",
-        "svg",
-        '[role="button"]',
-        '[role="link"]',
-        '[role="tab"]',
-        "[contenteditable]",
-        "table",
-        "thead",
-        "tbody",
-        "tr",
-        "td",
-        "th",
-        "summary",
-        "details",
-      ].join(","),
-    )
-  ) {
-    return true;
-  }
-
-  if (
-    el.closest(
-      [
-        "p",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "li",
-        "span",
-        "pre",
-        "code",
-        "blockquote",
-        "figcaption",
-        "time",
-      ].join(","),
-    )
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-type DraggableHologramWindowProps = {
+type HologramWindowProps = {
   panelRef: RefObject<HTMLDivElement | null>;
   onPositionChange: () => void;
   className?: string;
   children: ReactNode;
-  /** Shell bounds for orb-relative spawn (desktop, after splash). */
   spawnShellRef?: RefObject<HTMLElement | null>;
   orbShellPxRef?: RefObject<{ x: number; y: number }>;
-  /** Splash overlay has started hiding (state flip). */
   splashHidden?: boolean;
-  /** After splash: fade buffer + post-splash hold in HologramPage — then orb spawn runs. */
   windowSpawnAllowed?: boolean;
-  /** 0-based order for sequential spawn from the orb. */
   spawnOrder?: number;
-  /** Identifies the panel for crosshair hit-testing (`data-holo-window`). */
   holoWindowId?: string;
-  /** When another panel is focused by the crosshair, this panel is de-emphasized. */
   dimmed?: boolean;
-  /** Desktop only: `center-left` pins the panel to ~28% / 50% of the shell after spawn prep. */
-  desktopPlacement?: "random" | "center-left";
-  /** Mobile only: `z-index` when panels overlap (desktop uses drag stack). */
-  mobileZIndex?: number;
 };
 
 export function DraggableHologramWindow({
@@ -162,26 +63,10 @@ export function DraggableHologramWindow({
   spawnOrder = 0,
   holoWindowId,
   dimmed = false,
-  desktopPlacement = "random",
-  mobileZIndex,
-}: DraggableHologramWindowProps) {
-  const stackCtx = useContext(HologramWindowStackContext);
-  const [isMobile, setIsMobile] = useState(false);
-  const desktopOffsetSeeded = useRef(false);
-
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  /** Same baseline for all panels; later siblings win until pointer raises this via bump(). */
-  const [stackZ, setStackZ] = useState(10);
+}: HologramWindowProps) {
   const spawnDeltaRef = useRef({ x: 0, y: 0 });
   const [spawnAnimToken, setSpawnAnimToken] = useState(0);
   const [spawnE, setSpawnE] = useState(1);
-  const dragRef = useRef<{
-    startX: number;
-    startY: number;
-    origX: number;
-    origY: number;
-  } | null>(null);
 
   const assignRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -192,30 +77,12 @@ export function DraggableHologramWindow({
   );
 
   useLayoutEffect(() => {
-    const mq = window.matchMedia(MOBILE_MQ);
-    const apply = () => {
-      const mobile = mq.matches;
-      setIsMobile(mobile);
-      if (!mobile && !desktopOffsetSeeded.current) {
-        desktopOffsetSeeded.current = true;
-        if (desktopPlacement !== "center-left") {
-          setOffset(randomDesktopOffset());
-        }
-      }
-    };
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, [desktopPlacement]);
-
-  useLayoutEffect(() => {
     onPositionChange();
-  }, [offset, isMobile, onPositionChange]);
+  }, [onPositionChange]);
 
   const spawnFromOrb =
-    windowSpawnAllowed && !isMobile && Boolean(spawnShellRef && orbShellPxRef);
+    windowSpawnAllowed && Boolean(spawnShellRef && orbShellPxRef);
 
-  /** After splash dismiss, until orb spawn is allowed (all breakpoints). */
   const preOrbSpawnHidden = splashHidden && !windowSpawnAllowed;
 
   useLayoutEffect(() => {
@@ -233,18 +100,6 @@ export function DraggableHologramWindow({
         const el = panelRef.current;
         if (!shell || !el) return;
         const s = shell.getBoundingClientRect();
-
-        if (desktopPlacement === "center-left") {
-          const r0 = el.getBoundingClientRect();
-          const targetCx = s.left + s.width * 0.28;
-          const targetCy = s.top + s.height * 0.5;
-          const cx0 = r0.left + r0.width / 2;
-          const cy0 = r0.top + r0.height / 2;
-          flushSync(() =>
-            setOffset({ x: targetCx - cx0, y: targetCy - cy0 }),
-          );
-        }
-
         const r = el.getBoundingClientRect();
         const cx = r.left + r.width / 2 - s.left;
         const cy = r.top + r.height / 2 - s.top;
@@ -258,18 +113,10 @@ export function DraggableHologramWindow({
       cancelled = true;
       cancelAnimationFrame(id);
     };
-  }, [
-    spawnFromOrb,
-    windowSpawnAllowed,
-    isMobile,
-    spawnShellRef,
-    orbShellPxRef,
-    panelRef,
-    desktopPlacement,
-  ]);
+  }, [spawnFromOrb, windowSpawnAllowed, spawnShellRef, orbShellPxRef, panelRef]);
 
   useEffect(() => {
-    if (!spawnFromOrb || spawnAnimToken === 0 || isMobile) return;
+    if (!spawnFromOrb || spawnAnimToken === 0) return;
 
     let raf = 0;
     const startWall = performance.now();
@@ -293,76 +140,9 @@ export function DraggableHologramWindow({
 
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [spawnAnimToken, spawnFromOrb, spawnOrder, isMobile, onPositionChange]);
-
-  const onPointerDown = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return;
-      if (isPointerOnNonDraggableContent(e.target)) return;
-      e.preventDefault();
-      dragRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origX: offset.x,
-        origY: offset.y,
-      };
-      setIsDragging(true);
-      e.currentTarget.setPointerCapture(e.pointerId);
-    },
-    [offset.x, offset.y],
-  );
-
-  const onPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
-    const d = dragRef.current;
-    setOffset({
-      x: d.origX + (e.clientX - d.startX),
-      y: d.origY + (e.clientY - d.startY),
-    });
-  }, []);
-
-  const endDrag = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
-    dragRef.current = null;
-    setIsDragging(false);
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      /* already released */
-    }
-  }, []);
-
-  const bringToFront = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return;
-      if (stackCtx) setStackZ(stackCtx.bump());
-    },
-    [stackCtx],
-  );
+  }, [spawnAnimToken, spawnFromOrb, spawnOrder, onPositionChange]);
 
   const dimClass = dimmed ? "hologram-window-dimmed" : "";
-  /** Hug content; max-w-full caps width at the grid cell / viewport. */
-  const hugLayoutClass = "inline-flex min-w-0 max-w-full w-fit flex-col";
-
-  if (isMobile) {
-    return (
-      <div
-        ref={assignRef}
-        className={`${hugLayoutClass} ${className} ${dimClass}`.trim()}
-        style={{
-          ...(mobileZIndex != null ? { zIndex: mobileZIndex } : {}),
-          ...(preOrbSpawnHidden
-            ? { opacity: 0, pointerEvents: "none" as const }
-            : {}),
-        }}
-        {...(holoWindowId !== undefined
-          ? { "data-holo-window": holoWindowId }
-          : {})}
-      >
-        {children}
-      </div>
-    );
-  }
 
   const waitingSpawnMeasure =
     windowSpawnAllowed && spawnFromOrb && spawnAnimToken === 0;
@@ -381,8 +161,7 @@ export function DraggableHologramWindow({
         ? spawnE
         : undefined;
   const spawning = spawnFromOrb && spawnAnimToken > 0 && spawnE < 1;
-  const blockPointer =
-    preOrbSpawnHidden || waitingSpawnMeasure || spawning;
+  const blockPointer = preOrbSpawnHidden || waitingSpawnMeasure || spawning;
 
   const spawnScale = waitingSpawnMeasure
     ? SPAWN_START_SCALE
@@ -393,27 +172,17 @@ export function DraggableHologramWindow({
   return (
     <div
       ref={assignRef}
-      className={`${hugLayoutClass} ${className} ${dimClass} ${isDragging ? "cursor-grabbing" : "cursor-grab"}`.trim()}
+      className={`flex-col ${className} ${dimClass}`.trim()}
       {...(holoWindowId !== undefined
         ? { "data-holo-window": holoWindowId }
         : {})}
-      title="Drag empty panel area to reposition"
-      onPointerDownCapture={bringToFront}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
       style={{
-        transform: `translate(${offset.x + sx}px, ${offset.y + sy}px) scale(${spawnScale})`,
+        transform: `translate(${sx}px, ${sy}px) scale(${spawnScale})`,
         transformOrigin: "center center",
         opacity: spawnOpacity,
-        zIndex: isDragging ? stackZ + 50 : stackZ,
-        touchAction: "none",
         pointerEvents: blockPointer ? "none" : undefined,
         willChange:
-          preOrbSpawnHidden || spawning
-            ? "transform, opacity"
-            : undefined,
+          preOrbSpawnHidden || spawning ? "transform, opacity" : undefined,
       }}
     >
       {children}
